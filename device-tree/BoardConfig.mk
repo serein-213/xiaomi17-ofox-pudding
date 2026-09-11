@@ -258,6 +258,11 @@ FOX_DEVICE_MODEL := Xiaomi 17 (pudding)
 # (OrangeFox 生成器会把它写进 update-binary 的 TARGET_DEVICE_ALT)
 FOX_TARGET_DEVICES := sm8750
 
+# 让 recovery 在解密之前就从 /persist 读取设置并应用主题。
+# 否则加密设备的解密页面用默认主题(Cream=亮色), 解密后才切成用户设置的主题
+# ⇒ 解密页与主界面主题不一致。
+FOX_ALLOW_EARLY_SETTINGS_LOAD := 1
+
 # [0027b] flashlight: 本机 LED 节点 (white=冷/yellow=暖); orangefox.mk 注入编译宏, 优先级高于主题变量
 OF_FL_PATH1 := /sys/class/leds/white:flash-1
 OF_FL_PATH2 := /sys/class/leds/yellow:flash-0
