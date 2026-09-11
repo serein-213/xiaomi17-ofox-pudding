@@ -164,6 +164,8 @@ jobs:
 
       - name: 构建
         env:
+          # 仓库被 checkout 到 repo/ 子目录, 必须显式告诉脚本仓库根在哪
+          REPO_ROOT: ${{ github.workspace }}/repo
           BUILD_JOBS: ${{ runner.cores }}
           CCACHE_DIR: ~/.ccache
           CCACHE_EXEC: /usr/bin/ccache

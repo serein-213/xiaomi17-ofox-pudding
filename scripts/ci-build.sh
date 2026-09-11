@@ -6,7 +6,14 @@
 set -euo pipefail
 
 NAME="${1:?用法: ci-build.sh <device-name>}"
-REPO_ROOT="${GITHUB_WORKSPACE:-$(cd "$(dirname "$0")/.." && pwd)}"
+# 仓库根目录: 优先显式传入的 REPO_ROOT, 否则按脚本自身位置推断。
+# (注意: 不能默认用 GITHUB_WORKSPACE —— workflow 里仓库被 checkout 到 repo/ 子目录,
+#  而 GITHUB_WORKSPACE 指向其父目录, 会导致读不到 devices.yml)
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+if [ ! -f "$REPO_ROOT/devices.yml" ]; then
+	echo "::error::在 $REPO_ROOT 下找不到 devices.yml (REPO_ROOT 解析有误)"
+	exit 1
+fi
 SRC_ROOT="${SRC_ROOT:-$REPO_ROOT/fox_16.0}"
 
 # 从 devices.yml 读取该设备配置(不依赖 yq, 用 python 解析)
