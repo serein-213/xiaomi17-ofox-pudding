@@ -84,10 +84,17 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update -qq
+          # 注意: ubuntu-latest 现为 24.04, libncurses5 / lib32ncurses5-dev 已废弃移除;
+          # AOSP 构建在新版 Ubuntu 上改用下列等价包.
           sudo apt-get install -y -qq git-core gnupg flex bison build-essential \
-            zip unzip curl rsync libc6-dev-i386 libncurses5 lib32ncurses5-dev \
-            x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev \
-            libxml2-utils xsltproc fontconfig xz-utils python3-yaml ccache
+            zip unzip curl rsync libc6-dev-i386 libncurses-dev lib32z1-dev \
+            x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc \
+            fontconfig xz-utils python3-yaml ccache imagemagick \
+            lib32stdc++6 g++-multilib gcc-multilib || {
+              echo "部分包失败, 尝试最小集合"; \
+              sudo apt-get install -y -qq git-core gnupg flex bison build-essential \
+                zip unzip curl rsync libxml2-utils xsltproc fontconfig xz-utils \
+                python3-yaml ccache; }
           echo "  repo 工具版本:"; which repo || true
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
