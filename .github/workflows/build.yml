@@ -15,7 +15,7 @@ on:
         default: ''
   push:
     branches: [master, main]
-    paths: ['patches/**', 'device-tree/**', 'devices.yml', 'scripts/**']
+    paths: ['patches/**', 'device-tree/**', 'devices.yml', 'scripts/**', '.github/workflows/**']
   release:
     types: [published]
 
