@@ -452,3 +452,17 @@ int res_scale_surface(gr_surface source, gr_surface* destination, float scale_w,
     source = NULL;
     return 0;
 }
+
+// [R12.0 移植] SVG 引擎需要查询当前像素格式
+int res_get_pixel_format(void) {
+#if defined(RECOVERY_ABGR)
+    return GGL_PIXEL_FORMAT_RGBA_8888;
+#elif defined(RECOVERY_BGRA)
+    return GGL_PIXEL_FORMAT_RGBA_8888;
+#elif defined(RECOVERY_RGBA)
+    return GGL_PIXEL_FORMAT_BGRA_8888;
+#elif defined(RECOVERY_RGBX)
+    return GGL_PIXEL_FORMAT_RGBA_8888;
+#endif
+    return GGL_PIXEL_FORMAT_BGRA_8888;
+}

@@ -99,6 +99,7 @@ int ev_has_mouse(void);
 
 // Returns 0 if no error, else negative.
 int res_create_surface(const char* name, gr_surface* pSurface);
+int res_get_pixel_format(void);
 void res_free_surface(gr_surface surface);
 int res_scale_surface(gr_surface source, gr_surface* destination, float scale_w, float scale_h);
 
