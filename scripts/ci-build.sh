@@ -121,19 +121,34 @@ echo "    --- aosp_target_release ---"; cat vendor/twrp/vars/aosp_target_release
 
 echo "    --- device/xiaomi/ ---"; ls device/xiaomi/ 2>/dev/null | sed 's/^/      /' || true
 
-echo "    --- $DEVICE_DIR 关键文件 ---"; ls AndroidProducts.mk BoardConfig.mk twrp_*.mk 2>/dev/null | sed 's/^/      /' || true
+echo "    --- $DEVICE_DIR 关键文件 ---"; ls "$DEVICE_DIR"/AndroidProducts.mk "$DEVICE_DIR"/BoardConfig.mk "$DEVICE_DIR"/twrp_*.mk 2>/dev/null | sed 's/^/      /' || true
 
 echo "    --- AndroidProducts.mk ---"; grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$DEVICE_DIR/AndroidProducts.mk" 2>/dev/null | sed 's/^/      /' || true
 
 # 第一次 lunch 也保留输出, 否则失败原因被 /dev/null 吞掉
 
-if ! lunch "$TARGET" 2>&1 | tail -12 | sed 's/^/      /'; then
-
+# 注意: 绝不能写成 `lunch ... | tail` ——
+#   ① lunch 是 envsetup.sh 里的 bash 函数, 放进管道会在子 shell 执行,
+#      它导出的 TARGET_PRODUCT/TARGET_DEVICE/TARGET_BUILD_VARIANT 等全部丢失,
+#      后续编译步骤拿不到 lunch 结果;
+#   ② 管道退出码取最后一个命令, `if !` 恒为假, 回退分支永远不会执行。
+# 这里改为: 输出重定向到文件后本地 tail, lunch 保持在当前 shell 执行。
+LUNCH_LOG=/tmp/lunch.log
+if lunch "$TARGET" >"$LUNCH_LOG" 2>&1; then
+	tail -12 "$LUNCH_LOG" | sed 's/^/      /'
+else
+	tail -12 "$LUNCH_LOG" | sed 's/^/      /'
 	echo "    lunch $TARGET 失败, 回退 $FALLBACK"
-
-	lunch "$FALLBACK" 2>&1 | tail -12 | sed 's/^/      /'
-
+	if ! lunch "$FALLBACK" >"$LUNCH_LOG" 2>&1; then
+		tail -20 "$LUNCH_LOG" | sed 's/^/      /'
+		echo "::error::lunch 全部失败 ($TARGET / $FALLBACK)"
+		exit 1
+	fi
+	tail -12 "$LUNCH_LOG" | sed 's/^/      /'
 fi
+# lunch 成功后显式固化关键变量, 供后续步骤与子进程使用
+export TARGET_PRODUCT TARGET_DEVICE TARGET_BUILD_VARIANT TARGET_RELEASE 2>/dev/null || true
+echo "    TARGET_PRODUCT=${TARGET_PRODUCT:-?} TARGET_DEVICE=${TARGET_DEVICE:-?} TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT:-?}"
 
 echo "    TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT 2>/dev/null) TARGET_DEVICE=$(get_build_var TARGET_DEVICE 2>/dev/null)"
 
