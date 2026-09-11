@@ -956,7 +956,7 @@ extern "C" int gui_loadResources(void)
 		{
 			TWFunc::copy_file(persist_theme, "/twres/themes/style.xml", 0, false);
 			LOGINFO("Decrypt theme: restored user theme from %s\n", persist_theme.c_str());
-			printf("DECRYPT_THEME_APPLIED=%s\n", persist_theme);
+			printf("DECRYPT_THEME_APPLIED=%s\n", persist_theme.c_str());
 		}
 		else
 		{
@@ -1041,7 +1041,7 @@ extern "C" int gui_loadResources(void)
 		if (TWFunc::Path_Exists(user_theme))
 		{
 			if (!TWFunc::Path_Exists("/persist/Fox/.theme"))
-				PartitionManager.Make_Dir("/persist/Fox/.theme", false);
+				mkdir("/persist/Fox/.theme", 0777);
 			TWFunc::copy_file(user_theme, mirror, 0, false);
 			printf("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
 		}
