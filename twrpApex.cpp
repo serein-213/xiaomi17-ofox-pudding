@@ -148,11 +148,20 @@ bool twrpApex::loadApexImage(std::string fileToMount, size_t loop_device_number)
 		return false;
 	}
 
+	/* [0019] 原代码先 close(fd) 再 lseek(fd,...) -> 返回 -1, lo_sizelimit 变成
+	 * 0xFFFFFFFFFFFFFFFF, LOOP_SET_STATUS64 内核返回 EOVERFLOW(75)
+	 * ("Value too large for defined data type"), APEX 全部挂载失败。 */
+	off_t apex_size = lseek(fd, 0, SEEK_END);
+	if (apex_size <= 0) {
+		LOGERR("unable to determine apex size: %s. Reason: %s\n", fileToMount.c_str(), strerror(errno));
+		close(fd);
+		close(loop_fd);
+		return false;
+	}
 	close(fd);
 
 	memset(&info, 0, sizeof(struct loop_info64));
 	strlcpy((char*)info.lo_crypt_name, "twrpApex", LO_NAME_SIZE);
-	off_t apex_size = lseek(fd, 0, SEEK_END);
 	info.lo_sizelimit = apex_size;
 	if (ioctl(loop_fd, LOOP_SET_STATUS64, &info)) {
 		LOGERR("failed to mount loop: %s: %s\n", fileToMount.c_str(), strerror(errno));

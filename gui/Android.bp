@@ -20,6 +20,7 @@ libguitwrp_defaults {
 }
 
 cc_library_static {
+    header_libs: ["libvold_headers"],
     name: "libguitwrp",
     defaults: ["libguitwrp_defaults", "twrp_defaults"],
     rtti: true,

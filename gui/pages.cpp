@@ -205,6 +205,14 @@ int LoadAttrIntScaleY(xml_node<>* element, const char* attrname, int defaultvalu
 	return scale_theme_y(LoadAttrInt(element, attrname, defaultvalue));
 }
 
+float LoadAttrFloat(xml_node<>* element, const char* attrname, float defaultvalue)
+{
+	string value = LoadAttrString(element, attrname);
+	// resolve variables
+	DataManager::GetValue(value, value);
+	return value.empty() ? defaultvalue : stof(value.c_str());
+}
+
 COLOR LoadAttrColor(xml_node<>* element, const char* attrname, bool* found_color, COLOR defaultvalue)
 {
 	string value = LoadAttrString(element, attrname);
@@ -1992,6 +2000,18 @@ void Page::SelectFocusedElement(bool longPressed) {
 			focusedElement->GetActionPos(centerX, centerY, actionW, actionH);
 			centerX += actionW / 2;
 			centerY += actionH / 2;
+		}
+
+		GUIKeyboard* keyboard = dynamic_cast<GUIKeyboard*>(focusedElement);
+		if (keyboard) {
+			focusedElement->NotifyTouch(TOUCH_START, centerX, centerY);
+
+			if (longPressed)
+				focusedElement->NotifyTouch(TOUCH_HOLD, centerX, centerY);
+			else
+				focusedElement->NotifyTouch(TOUCH_RELEASE, centerX, centerY);
+
+			return;
 		}
 
 		if (longPressed)

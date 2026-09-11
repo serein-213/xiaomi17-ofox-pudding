@@ -782,6 +782,12 @@ void TWPartition::Setup_Data_Partition(bool Display_Error) {
 }
 
 void TWPartition::Set_FBE_Status() {
+	/* [0040] 回退 #38 的错误改动: 本设备(metadata/FBE-DE)在 Decrypt_FBE_DE() 成功后,
+	   数据分区已经可以通过解密后的块设备(dm-18)挂载, 因此必须置
+	   Is_Decrypted/TW_IS_DECRYPTED=1, 否则 TWPartition::Mount() 会去摸原始加密设备
+	   (/dev/block/sda34) 并失败:
+	     I:Can't probe device /dev/block/sda34  /  I:Actual block device: '/dev/block/sda34'
+	   #38 曾把它改成 false 以求"解密按钮常驻", 结果连挂载都坏了 -> 回退. */
 	DataManager::SetValue(TW_IS_DECRYPTED, 1);
 	Is_Encrypted = true;
 	Is_Decrypted = true;

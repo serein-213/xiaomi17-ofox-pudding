@@ -1535,6 +1535,37 @@ int DataManager::GetMagicValue(const string& varName, string& value)
 		value = tmp;
 		return 0;
 	}
+	/* [0139] 挖孔屏用的分列时钟: hh 显示在挖孔左侧、mm 在右侧.
+	   本机(小米17)挖孔在屏幕正中, 居中显示的时间会被完全遮挡, 而居左/居右
+	   用户希望保留"居中观感" ⇒ 拆成两半分别贴孔左右, 由主题决定摆放位置.
+	   小时制规则与 tw_time 完全一致(遵循 tw_military_time 设置). */
+	else if (varName == "tw_time_hh")
+	{
+		char tmp[8];
+		struct tm *current;
+		time_t now;
+		int tw_military_time;
+		now = time(0);
+		current = localtime(&now);
+		GetValue(TW_MILITARY_TIME, tw_military_time);
+		if (tw_military_time == 1)
+			sprintf(tmp, "%d", current->tm_hour);
+		else
+			sprintf(tmp, "%d", current->tm_hour % 12 == 0 ? 12 : current->tm_hour % 12);
+		value = tmp;
+		return 0;
+	}
+	else if (varName == "tw_time_mm")
+	{
+		char tmp[8];
+		struct tm *current;
+		time_t now;
+		now = time(0);
+		current = localtime(&now);
+		sprintf(tmp, "%02d", current->tm_min);
+		value = tmp;
+		return 0;
+	}
 	else if (varName == "tw_cpu_temp")
 	{
 		int tw_no_cpu_temp;

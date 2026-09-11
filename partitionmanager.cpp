@@ -104,6 +104,10 @@ extern "C" {
 #include "gui/rapidxml.hpp"
 #ifdef TW_INCLUDE_FBE
 #include "Decrypt.h"
+
+/* [0126] 定义在 system/vold/KeyStorage.cpp 的 android::vold 命名空间内. */
+namespace android { namespace vold { bool fox_wait_for_keystore(int timeout_sec); } }
+
 #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
 	#ifdef USE_FSCRYPT
 	#include "cryptfs.h"
@@ -686,15 +690,25 @@ void TWPartitionManager::Decrypt_Data() {
 #ifdef USE_FSCRYPT
 			std::vector<std::string> user_devices;
 			std::vector<bool> device_aliased;
-			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+			/* [0042] cold boot 时 vold 的 metadata 解密需要 vendor 的 keymint HAL
+			   (keystore2 -> keymint 解包 DE 密钥), 而该 HAL 往往比这行代码晚就绪 ->
+			   首次失败后原代码不再重试, 造成 /data 永久无法挂载:
+			     "Unable to decrypt metadata encryption"
+			   这里做有界重试 (10 x 1s), 等 HAL 起来后自然成功. */
+						if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
 #endif
 				Decrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly
-				int retry_count = 10;
+				/* [0041] 原重试窗口是 usleep(500)=0.5ms x10 —— 太短:
+				   本设备的 vold 线程(vold_prepare_subdirs)在 metadata 解密后仍在 /data 内
+				   工作(relabel /data/misc_de/0/...), 此时 Mount() 会因挂载点被占用返回
+				   "Failed to mount '/data' (Device or resource busy)" 而彻底放弃.
+				   改为 50ms x 60 = 3s 窗口, 等 vold 收尾. */
+				int retry_count = 60;
 				while (!Decrypt_Data->Mount(false) && --retry_count)
-					usleep(500);
+					usleep(50000);
 				if (Decrypt_Data->Mount(false)) {
 					if (!Decrypt_Data->Decrypt_FBE_DE()) {
 						LOGERR("Unable to decrypt FBE device\n");
@@ -2344,11 +2358,109 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
   Set_Crypto_State();
   Set_Crypto_Type("block");
 
+  /* [0052] 确保解密所需的 vendor HAL 链就绪.
+     本机 vendor HAL(keymint 等)必须经 LD_PRELOAD shim 包装才能通过 servicemanager 注册
+     (libbinder 代次不匹配: "Mixing copies of libbinder"), 而启动阶段做的包装可能被
+     TWRP 后续的 mount_all 覆盖. 这里在解密前补一次, 并等待 keymint 进入 running,
+     使 PIN 解密不再依赖启动时序. */
+  system("sh /sm17/wrap_hal.sh >/dev/null 2>&1 &");
+  for (int hal_wait = 0; hal_wait < 25; ++hal_wait) {
+      char st[PROPERTY_VALUE_MAX] = {};
+      property_get("init.svc.vendor.keymint", st, "");
+      if (strcmp(st, "running") == 0) {
+          LOGINFO("Decrypt_Device: vendor.keymint is running (after %ds)\n", hal_wait);
+          break;
+      }
+      sleep(1);
+  }
+
+  /* [0050] 状态自愈 + 解密设备挂载:
+     本机(metadata/FBE-DE)启动时 Set_FBE_Status() 可能在 Key_Directory 尚未解析时执行,
+     走空分支把 TW_IS_FBE 置 0; 并且 UnMount_Main_Partitions() 之后 /data 的
+     Decrypted_Block_Device(dm-18) 状态也可能丢失. 后果是进入本函数后:
+       - TW_IS_FBE=0  -> 用户 PIN 被误判为 FDE 路径 -> 永远报"密码错误"
+       - Mount_By_Path("/data") 去打原始设备(sda34) -> 失败 -> 直接 return -1
+     这里在判定前用 /data 分区自身的 Key_Directory/Decrypted_Block_Device 修正状态. */
+  {
+      TWPartition *dp = Find_Partition_By_Path("/data");
+      if (dp != NULL) {
+          if (!dp->Key_Directory.empty()) {
+              if (!dp->Is_FBE) {
+                  dp->Is_FBE = true;
+                  LOGINFO("Decrypt_Device: re-asserted Is_FBE (Key_Directory=%s)\n", dp->Key_Directory.c_str());
+              }
+              DataManager::SetValue(TW_IS_FBE, 1);
+              DataManager::SetValue(TW_IS_ENCRYPTED, 1);
+          }
+          if (!dp->Decrypted_Block_Device.empty()) {
+              dp->Is_Encrypted = true;
+              dp->Is_Decrypted = true;
+              LOGINFO("Decrypt_Device: using decrypted device %s for /data\n", dp->Decrypted_Block_Device.c_str());
+          } else {
+              /* [0051] 自给自足: 若解密块设备不存在(启动时 HAL 未就绪 -> DE 解密没跑成),
+                 就在这里当场做一次 metadata 解密, 不再依赖启动时序. */
+              LOGINFO("Decrypt_Device: no decrypted device, running metadata decrypt now\n");
+              TWPartition *kdp = Find_Partition_By_Path(dp->Key_Directory);
+              if (kdp != NULL && !kdp->Is_Mounted())
+                  Mount_By_Path(dp->Key_Directory, false);
+              std::vector<std::string> ud; std::vector<bool> da;
+              /* [0126] 等 keystore2/keymint 服务注册完成再解密 metadata:
+                 恢复环境里它们晚于 vold 的首次尝试, 早跑会因 Keystore() 构造失败
+                 导致 /data 挂不上(只能重启恢复). */
+              {
+                  android::vold::fox_wait_for_keystore(10);
+              }
+              if (android::vold::fscrypt_mount_metadata_encrypted(dp->Actual_Block_Device,
+                      dp->Mount_Point, false, false, dp->Current_File_System, false, ud, da, 0,
+                      TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+                  std::string cb = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
+                  if (!cb.empty()) {
+                      dp->Decrypted_Block_Device = cb;
+                      dp->Is_Encrypted = true;
+                      dp->Is_Decrypted = true;
+                      LOGINFO("Decrypt_Device: metadata decrypted on demand -> %s\n", cb.c_str());
+                  }
+              } else {
+                  LOGINFO("Decrypt_Device: on-demand metadata decrypt failed\n");
+              }
+          }
+      }
+  }
+
   if (DataManager::GetIntValue(TW_IS_FBE))
     {
 #ifdef TW_INCLUDE_FBE
 		if (!Mount_By_Path("/data", true)) // /data has to be mounted for FBE
 			return -1;
+
+		/* [0064] /data 挂载成功后, 按正确顺序准备解密前置:
+		   (a) 同步已安装系统的 keystore 数据库(句柄/spblob 都依赖它)
+		   (b) 打印一次真实布局快照(CE 受保护目录只有 TWRP keyring 可读) */
+		android::keystore::syncKeystoreDb();
+		{
+			DIR *d = opendir("/data");
+			if (d) {
+				struct dirent *e; int n = 0;
+				LOGINFO("Decrypt_Device: /data entries:");
+				while ((e = readdir(d)) != NULL && n < 30) {
+					if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+					LOGINFO("Decrypt_Device:   %s", e->d_name);
+					n++;
+				}
+				closedir(d);
+			} else {
+				LOGERR("Decrypt_Device: cannot open /data (%s)", strerror(errno));
+			}
+			const char *probe[] = {
+				"/data/misc/keystore", "/data/misc_de/0/keystore", "/data/system/keystore",
+				"/data/system/spblob", "/data/system_de/0/spblob", "/data/unencrypted/key",
+				"/data/system/locksettings.db", NULL };
+			for (int i = 0; probe[i] != NULL; i++) {
+				struct stat st;
+				LOGINFO("Decrypt_Device: probe %s -> %s", probe[i],
+				        stat(probe[i], &st) == 0 ? "EXISTS" : "missing");
+			}
+		}
 
 		bool user_need_decrypt = false;
 		std::vector<users_struct>::iterator iter;
@@ -2368,6 +2480,47 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 		gui_msg(Msg("decrypting_user_fbe=Attempting to decrypt FBE for user {1}...")(user_id));
 		if (android::keystore::Decrypt_User(user_id, Password)) {
 			gui_msg(Msg("decrypt_user_success_fbe=User {1} Decrypted Successfully")(user_id));
+			/* [0080] CE 解锁成功后必须重建 Internal Storage 映射:
+			   开机阶段的 datamedia 建立发生在 /data 解密之前, 那时 /sdcard 无法建立,
+			   导致解密成功后 TWRP 仍报 "Unable to find partition for path '/sdcard'".
+			   这里在解锁成功后重新建立 /data/media 与相关目录. */
+			{
+				TWPartition* dp2 = Find_Partition_By_Path("/data");
+				if (dp2 != NULL) {
+					dp2->Is_Decrypted = true;
+					dp2->Is_Encrypted = true;
+					DataManager::SetValue(TW_IS_DECRYPTED, 1);
+					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
+					dp2->Setup_Data_Media();
+					dp2->Recreate_Media_Folder();
+					/* [0096] 立即重挂 /data 并建立 /sdcard:
+					   Setup_Data_Media() 末尾会执行 UnMount(true)(partition.cpp:1327/1382),
+					   导致"解密成功后 /data 反而处于未挂载"状态 —— 实测会报
+					       UnMount: Unable to find partition for path '/sdcard'
+					   且后续若以裸分区重挂, /data/media/<u> 的文件名会重新变成密文.
+					   此处重挂会走 Decrypted_Block_Device(dm 设备), 保证解名正确. */
+					if (!dp2->Is_Mounted()) {
+						int mr = 60;
+						while (!dp2->Mount(false) && --mr) usleep(50000);
+					}
+					bool sdcard_ok = PartitionManager.Mount_By_Path("/sdcard", false);
+					LOGINFO("[0080] rebuilt /data/media after CE unlock (data_mounted=%d sdcard=%d)\n",
+					        dp2->Is_Mounted() ? 1 : 0, sdcard_ok ? 1 : 0);
+					/* [0121] 上面的重挂换了 superblock, 内核密钥环随之清空 ⇒ DE 层
+					   文件名会退回密文(实测 /data/misc、/data/system_de/0 均如此).
+					   重挂完成后立刻重新装载 DE 密钥. */
+					{
+						extern bool fscrypt_reinit_de_keys_after_remount();
+						bool rd = fscrypt_reinit_de_keys_after_remount();
+						LOGINFO("[0121] DE keys re-installed after remount: %d\n", (int)rd);
+						/* [0125] CE 密钥同样随挂载实例失效 —— 重挂后必须重装,
+						   否则 /data/media/0、/data/system_ce/0 名字仍是密文. */
+						extern bool fscrypt_reinstall_ce_key();
+						bool rc = fscrypt_reinstall_ce_key();
+						LOGINFO("[0125] CE key re-installed after remount: %d\n", (int)rc);
+					}
+				}
+			}
 			Mark_User_Decrypted(user_id);
 			if (user_id == 0) {
 				// When decrypting user 0 also try all other users

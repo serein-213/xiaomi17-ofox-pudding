@@ -49,6 +49,7 @@ LOCAL_SRC_FILES := \
     progresstracking.cpp \
     startupArgs.cpp \
     twrp-functions.cpp \
+    gui/nanosvg.cpp \
     orangefox.cpp \
     twrpDigestDriver.cpp \
     openrecoveryscript.cpp \
