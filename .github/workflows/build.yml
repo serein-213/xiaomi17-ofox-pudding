@@ -1,0 +1,140 @@
+name: Build OrangeFox Recovery
+
+# ============================================================
+# 触发方式
+#   · 手动: Actions 页面点 Run workflow, 可勾选要构建的设备
+#   · 推送: 改动 patches/ 或 device-tree/ 时自动构建(仅默认设备)
+#   · Tag : 打 v* 标签时构建全部启用设备并创建 Release
+# ============================================================
+on:
+  workflow_dispatch:
+    inputs:
+      devices:
+        description: '要构建的设备(逗号分隔, 留空=devices.yml 中所有 enabled)'
+        required: false
+        default: ''
+  push:
+    branches: [master, main]
+    paths: ['patches/**', 'device-tree/**', 'devices.yml', 'scripts/**']
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  FOX_BRANCH: twrp-16
+  MANIFEST: https://github.com/OrangeFox16/platform_manifest_twrp_aosp.git
+  SRC_ROOT: ${{ github.workspace }}/fox_16.0
+
+jobs:
+  # ---------- 读取 devices.yml, 生成构建矩阵 ----------
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gen
+        env:
+          REQUESTED: ${{ github.event.inputs.devices }}
+        run: |
+          python3 - <<'PY' > /tmp/devices.json
+          import os, json, yaml
+          cfg = yaml.safe_load(open('devices.yml'))
+          devs = [d for d in cfg['devices'] if d.get('enabled')]
+          req = os.environ.get('REQUESTED','').strip()
+          if req:
+              want = {x.strip() for x in req.split(',') if x.strip()}
+              devs = [d for d in cfg['devices'] if d['name'] in want]
+          print(json.dumps(devs))
+          PY
+          echo "matrix=$(cat /tmp/devices.json)" >> "$GITHUB_OUTPUT"
+          echo "将构建: $(cat /tmp/devices.json | python3 -c 'import sys,json;print(", ".join(d["name"] for d in json.load(sys.stdin)))')"
+
+  # ---------- 构建设备 ----------
+  build:
+    needs: config
+    if: needs.config.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350          # 留在 GitHub 6 小时上限内
+    strategy:
+      fail-fast: false
+      max-parallel: 2             # 同时最多 2 台, 避免 runner 排队过久
+      matrix:
+        device: ${{ fromJSON(needs.config.outputs.matrix) }}
+
+    steps:
+      - name: 检出本仓库(补丁与设备树改动)
+        uses: actions/checkout@v4
+        with:
+          path: repo
+
+      # 释放 runner 磁盘: 预装工具链对 AOSP 构建无用, 可腾出约 30GB
+      - name: 清理磁盘空间
+        run: |
+          echo "清理前:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+                      /usr/lib/jvm /usr/share/swift "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          docker system prune -af || true
+          echo "清理后:"; df -h / | tail -1
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git-core gnupg flex bison build-essential \
+            zip unzip curl rsync libc6-dev-i386 libncurses5 lib32ncurses5-dev \
+            x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev \
+            libxml2-utils xsltproc fontconfig xz-utils python3-yaml ccache
+          echo "  repo 工具版本:"; which repo || true
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod +x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: 缓存 ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ matrix.device.name }}-${{ github.run_id }}
+          restore-keys: ccache-${{ matrix.device.name }}-
+
+      - name: 初始化源码树(浅克隆)
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          mkdir -p "$SRC_ROOT" && cd "$SRC_ROOT"
+          git config --global user.name  "ci-builder"
+          git config --global user.email "ci@localhost"
+          git config --global http.postBuffer 524288000
+          repo init --depth=1 -u "$MANIFEST" -b "$FOX_BRANCH" \
+                    --git-lfs=false --no-clone-bundle
+          echo "==> repo sync (浅克隆, 只取一层历史)"
+          repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags --force-sync --optimized-fetch --prune
+          echo "==> 源码树大小:"; du -sh . 2>/dev/null
+
+      - name: 构建
+        working-directory: ${{ env.SRC_ROOT }}
+        env:
+          BUILD_JOBS: ${{ runner.cores }}
+          CCACHE_DIR: ~/.ccache
+          CCACHE_EXEC: /usr/bin/ccache
+        run: |
+          export USE_CCACHE=1
+          ccache -M 8G || true
+          bash "$GITHUB_WORKSPACE/repo/scripts/ci-build.sh" "${{ matrix.device.name }}"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-${{ matrix.device.name }}
+          path: repo/artifacts/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: 附加到 Release(tag 触发时)
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: repo/artifacts/*

@@ -1,0 +1,40 @@
+# ============================================================
+# CI 设备矩阵 —— 增删设备只需改这里
+# ============================================================
+# 每个设备条目说明:
+#   name          : 显示名 / 产物命名用
+#   target        : lunch 目标 (主选)
+#   fallback      : lunch 回退目标
+#   out_product   : out/target/product/<此名>/recovery.img
+#   device_dir    : 设备树在源码树里的路径
+#   upstream_tree : 上游设备树仓库 (克隆下来后我们叠加改动)
+#   upstream_ref  : 上游分支/tag
+
+defaults:
+  manifest_url: https://github.com/OrangeFox16/platform_manifest_twrp_aosp.git
+  manifest_branch: twrp-16
+  build_targets: adbd recoveryimage
+  bootimg: recovery.img
+
+devices:
+  - name: pudding
+    desc: Xiaomi 17 (pudding / sm8750 / Android 17)
+    target: twrp_sm8750_thales-bp2a-eng
+    fallback: twrp_sm8750_thales-ap2a-eng
+    out_product: sm8750_thales
+    device_dir: device/xiaomi/sm8750_thales
+    upstream_tree: https://github.com/antocorvo3000/twrp-xiaomi-17-series.git
+    upstream_ref: main
+    enabled: true
+
+  # 同一 SoC 平台(sm8750)的另一台设备。它**没有独立 recovery 分区**(走 vendor_boot),
+  # 刷机方式与 pudding 不同; 启用前请确认其设备树与本仓库 device-tree/ 的差异。
+  - name: nezha
+    desc: Xiaomi 17 series (nezha / sm8750 / vendor_boot)
+    target: twrp_sm8750_thales-bp2a-eng
+    fallback: twrp_sm8750_thales-ap2a-eng
+    out_product: sm8750_thales
+    device_dir: device/xiaomi/sm8750_thales
+    upstream_tree: https://github.com/antocorvo3000/twrp-xiaomi-17-series.git
+    upstream_ref: main
+    enabled: false
