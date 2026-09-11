@@ -1084,8 +1084,15 @@ error:
 
 extern "C" int gui_start(void)
 {
-	// [本地修复] SYNC_THEME_MIRROR: 此时 /sdcard 已解密可读, 把用户主题同步一份到 /persist,
-	// 供下次解密阶段(读不到 /sdcard 时)恢复, 解决"解密页配色不跟随用户皮肤"。
+	return gui_startPage("main", 1, 0);
+}
+
+extern "C" int gui_startPage(const char *page_name, const int allow_commands, int stop_on_page_done)
+{
+	// [本地修复] SYNC_THEME_MIRROR: /sdcard 可读时把用户主题镜像到 /persist。
+	// 放在此函数是因为 twrp.cpp 的 decrypt / reapply_settings / main 三条路径都经过它,
+	// 而 gui_start() 在 reapply_settings 分支下不会被调用。
+	// /sdcard 未挂载时 Path_Exists 为假, 天然跳过, 不影响解密页。
 	{
 		const string user_theme = "/sdcard/Fox/.theme/style.xml";
 		const string mirror = "/persist/Fox/.theme/style.xml";
@@ -1097,11 +1104,6 @@ extern "C" int gui_start(void)
 			LOGINFO("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
 		}
 	}
-	return gui_startPage("main", 1, 0);
-}
-
-extern "C" int gui_startPage(const char *page_name, const int allow_commands, int stop_on_page_done)
-{
 	if (!gGuiInitialized)
 		return -1;
 
