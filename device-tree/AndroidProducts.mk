@@ -18,4 +18,5 @@ PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_sm8850_thales.mk
 
 COMMON_LUNCH_CHOICES := \
-    twrp_sm8850_thales-ap2a-eng
+    twrp_sm8850_thales-ap2a-eng \
+    twrp_sm8850_thales-bp2a-eng

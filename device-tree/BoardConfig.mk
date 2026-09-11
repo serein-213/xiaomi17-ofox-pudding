@@ -254,6 +254,10 @@ BOARD_EXCLUDE_KERNEL_FROM_RECOVERY_IMAGE := true
 OF_MAINTAINER := serein-213
 FOX_DEVICE_MODEL := Xiaomi 17 (pudding)
 
+# 本机 SoC 实际是 sm8850, 但设备树历史上叫 sm8750 ⇒ 让安装包同时接受两个代号
+# (OrangeFox 生成器会把它写进 update-binary 的 TARGET_DEVICE_ALT)
+FOX_TARGET_DEVICES := sm8750
+
 # [0027b] flashlight: 本机 LED 节点 (white=冷/yellow=暖); orangefox.mk 注入编译宏, 优先级高于主题变量
 OF_FL_PATH1 := /sys/class/leds/white:flash-1
 OF_FL_PATH2 := /sys/class/leds/yellow:flash-0
