@@ -24,7 +24,7 @@ permissions:
 
 env:
   FOX_BRANCH: twrp-16
-  MANIFEST: https://github.com/OrangeFox16/platform_manifest_twrp_aosp.git
+  MANIFEST: https://github.com/serein-213/platform_manifest_twrp_aosp.git  # fork, 防上游删除
   SRC_ROOT: ${{ github.workspace }}/fox_16.0
 
 jobs:
