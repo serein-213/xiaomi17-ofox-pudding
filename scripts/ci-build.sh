@@ -125,6 +125,22 @@ echo "    --- $DEVICE_DIR 关键文件 ---"; ls "$DEVICE_DIR"/AndroidProducts.mk
 
 echo "    --- AndroidProducts.mk ---"; grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$DEVICE_DIR/AndroidProducts.mk" 2>/dev/null | sed 's/^/      /' || true
 
+# 决定性诊断: lunch 内部用 check_product -> make -f build/core/config.mk dump-many-vars
+# 浅克隆下若缺依赖, 这里能看到真实报错(而不是只看到 lunch 的 "not found")
+echo "    --- DIAG_CHECK_PRODUCT: device 目录实况 ---"
+ls -la "$DEVICE_DIR"/ 2>&1 | head -20 | sed 's/^/      /' || true
+echo "    --- DIAG_CHECK_PRODUCT: make dump-many-vars 实测 ---"
+TMPVARS=$(mktemp)
+if make -f build/core/config.mk dump-many-vars TARGET_PRODUCT="$TARGET" \
+	TARGET_BUILD_VARIANT=eng TARGET_RELEASE=bp2a >"$TMPVARS" 2>&1; then
+	echo "      ✓ make dump-many-vars 成功"
+	grep -E "^(TARGET_PRODUCT|TARGET_DEVICE|TARGET_RELEASE)=" "$TMPVARS" | head -5 | sed 's/^/      /' || true
+else
+	echo "      ✗ make dump-many-vars 失败(真实原因):"
+	tail -20 "$TMPVARS" | sed 's/^/        /'
+fi
+rm -f "$TMPVARS"
+
 # 第一次 lunch 也保留输出, 否则失败原因被 /dev/null 吞掉
 
 # 注意: 绝不能写成 `lunch ... | tail` ——
@@ -141,8 +157,21 @@ else
 	echo "    lunch $TARGET 失败, 回退 $FALLBACK"
 	if ! lunch "$FALLBACK" >"$LUNCH_LOG" 2>&1; then
 		tail -20 "$LUNCH_LOG" | sed 's/^/      /'
-		echo "::error::lunch 全部失败 ($TARGET / $FALLBACK)"
-		exit 1
+		# 兜底: lunch 依赖 check_product(make dump-many-vars), 浅克隆下可能失败。
+		# 直接设置 lunch 会导出的关键变量, 让后续编译仍可进行。
+		echo "    尝试兜底: 直接设置 TARGET_* 变量"
+		# 产品名 = target 去掉 "-<release>-<variant>" 后缀 (如 twrp_sm8850_thales-bp2a-eng)
+		export TARGET_PRODUCT="${TARGET%-*-*}"
+		export TARGET_DEVICE="$OUT_PRODUCT"
+		export TARGET_BUILD_VARIANT=eng
+		export TARGET_RELEASE=bp2a
+		export TARGET_BUILD_TYPE=release
+		echo "    TARGET_PRODUCT=$TARGET_PRODUCT TARGET_DEVICE=$TARGET_DEVICE"
+		if [ ! -d "out/target/product/$OUT_PRODUCT" ]; then
+			echo "::error::lunch 全部失败且兜底无效 (out/target/product/$OUT_PRODUCT 不存在)"
+			exit 1
+		fi
+		echo "    ✓ 兜底变量已设置"
 	fi
 	tail -12 "$LUNCH_LOG" | sed 's/^/      /'
 fi
