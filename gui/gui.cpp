@@ -938,6 +938,7 @@ extern "C" int gui_loadResources(void)
 			{
 				TWFunc::copy_file(src, "/twres/themes/style.xml", 0, false);
 				LOGINFO("Decrypt theme: applied skin '%s' to /twres/themes/style.xml\n", skin.c_str());
+				printf("DECRYPT_THEME_APPLIED=%s\n", skin.c_str());
 			}
 		}
 	}
