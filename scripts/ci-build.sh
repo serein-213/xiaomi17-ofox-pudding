@@ -116,14 +116,14 @@ if [ ! -f vendor/twrp/vars/aosp_target_release ]; then
 	printf '# Updated by ci-build.sh\naosp_target_release=bp2a\n' > vendor/twrp/vars/aosp_target_release
 	echo "    已补写 vendor/twrp/vars/aosp_target_release (bp2a)"
 fi
-echo "    --- aosp_target_release ---"; cat vendor/twrp/vars/aosp_target_release 2>/dev/null | sed 's/^/      /'
+echo "    --- aosp_target_release ---"; cat vendor/twrp/vars/aosp_target_release 2>/dev/null | sed 's/^/      /' || true
 # 诊断: 设备树放置与可用 lunch 组合(roomservice 报 "Device X not found" 时靠这些定位)
 
-echo "    --- device/xiaomi/ ---"; ls device/xiaomi/ 2>/dev/null | sed 's/^/      /'
+echo "    --- device/xiaomi/ ---"; ls device/xiaomi/ 2>/dev/null | sed 's/^/      /' || true
 
-echo "    --- $DEVICE_DIR 关键文件 ---"; ls AndroidProducts.mk BoardConfig.mk twrp_*.mk 2>/dev/null | sed 's/^/      /'
+echo "    --- $DEVICE_DIR 关键文件 ---"; ls AndroidProducts.mk BoardConfig.mk twrp_*.mk 2>/dev/null | sed 's/^/      /' || true
 
-echo "    --- AndroidProducts.mk ---"; grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$DEVICE_DIR/AndroidProducts.mk" 2>/dev/null | sed 's/^/      /'
+echo "    --- AndroidProducts.mk ---"; grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$DEVICE_DIR/AndroidProducts.mk" 2>/dev/null | sed 's/^/      /' || true
 
 # 第一次 lunch 也保留输出, 否则失败原因被 /dev/null 吞掉
 
