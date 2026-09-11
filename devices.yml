@@ -24,10 +24,10 @@ defaults:
 devices:
   - name: pudding
     desc: Xiaomi 17 (pudding / sm8750 / Android 17)
-    target: twrp_sm8750_thales-bp2a-eng
-    fallback: twrp_sm8750_thales-ap2a-eng
-    out_product: sm8750_thales
-    device_dir: device/xiaomi/sm8750_thales
+    target: twrp_sm8850_thales-bp2a-eng
+    fallback: twrp_sm8850_thales-ap2a-eng
+    out_product: sm8850_thales
+    device_dir: device/xiaomi/sm8850_thales
     upstream_tree: https://github.com/serein-213/twrp-xiaomi-17-series.git
     upstream_ref: main
     upstream_subdir: twrp_device_xiaomi_pudding   # 上游仓库里的子目录名(勿依赖模糊匹配)
@@ -40,7 +40,7 @@ devices:
     target: twrp_sm8750_thales-bp2a-eng
     fallback: twrp_sm8750_thales-ap2a-eng
     out_product: sm8750_thales
-    device_dir: device/xiaomi/sm8750_thales
+    device_dir: device/xiaomi/sm8850_thales
     upstream_tree: https://github.com/serein-213/twrp-xiaomi-17-series.git
     upstream_ref: main
     upstream_subdir: twrp_device_xiaomi_nezha

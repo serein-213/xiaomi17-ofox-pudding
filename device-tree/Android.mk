@@ -25,7 +25,7 @@
 
 LOCAL_PATH := $(call my-dir)
 
-ifeq ($(TARGET_DEVICE),sm8750_thales)
+ifeq ($(TARGET_DEVICE),sm8850_thales)
 include $(CLEAR_VARS)
 LOCAL_MODULE := hostfs_tool
 LOCAL_MODULE_CLASS := EXECUTABLES

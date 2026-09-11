@@ -155,6 +155,24 @@ jobs:
             exit 1
           fi
 
+          # ★ 关键: 上游 manifest 把 bootable/recovery 指向 TeamWin 的仓库(android_bootable_recovery,
+          # remote=TWRP-A16), 那里没有 OrangeFox 的 orangefox.mk/orangefox_defaults.go。
+          # 结果: build/make/envsetup.sh 的 orangefox_envsetup() 判定 NOT_ORANGEFOX=1 并提前 return,
+          # 导致 lunch 目标根本不注册, 构建在 3/5 lunch 阶段失败("Not OrangeFox! ...").
+          # 用 local_manifest 把 bootable/recovery 改回 OrangeFox 官方仓库即可。
+          mkdir -p .repo/local_manifests
+          cat > .repo/local_manifests/orangefox.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remote name="fox16" fetch="https://github.com/OrangeFox16" revision="fox_16.0" />
+            <remove-project name="android_bootable_recovery" />
+            <project path="bootable/recovery" name="android_bootable_recovery"
+                     remote="fox16" revision="fox_16.0" />
+          </manifest>
+          XML
+          echo "===> 已写入 local_manifest: bootable/recovery → OrangeFox16/fox_16.0"
+          grep -c "bootable/recovery" .repo/local_manifests/orangefox.xml | sed 's/^/      条目数: /'
+
           echo "===> 4/4 repo sync"
           if ! repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags 2>&1 | tail -40; then
             echo "::error::repo sync 失败 (见上方输出)"

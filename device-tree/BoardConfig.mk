@@ -23,7 +23,7 @@
 # *not* include it on all devices, so it is safe even with hardware-specific
 # components.
 
-# Runtime evidence in the extracted recovery points at device/xiaomi/sm8750_thales,
+# Runtime evidence in the extracted recovery points at device/xiaomi/sm8850_thales,
 # with popsicle-specific product properties injected at build time.
 #
 # Architecture
@@ -285,7 +285,7 @@ TW_DEFAULT_LANGUAGE := zh_CN
 # [0132] 设备自有 sepolicy 目录: 只加 dontaudit(免审计), 不放宽 allow.
 # 目的: 消除启动阶段 1700+ 条 type=1400 audit 日志(遍历 /data 统计备份大小 +
 # 枚举全部属性时被拒的访问)带来的写入开销. 安全语义不变.
-BOARD_SEPOLICY_DIRS += device/xiaomi/sm8750_thales/sepolicy
+BOARD_SEPOLICY_DIRS += device/xiaomi/sm8850_thales/sepolicy
 
 # [0133] 电池改用 sysfs 读取, 不再走 health AIDL binder 轮询
 # (TWRP 电池后台线程每秒一次 isDeclared+waitForService, 见 twrp.cpp:555-613)
