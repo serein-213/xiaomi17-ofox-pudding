@@ -29,6 +29,9 @@ OUT_PRODUCT=$(read_cfg out_product)
 DEVICE_DIR=$(read_cfg device_dir)
 UPSTREAM_TREE=$(read_cfg upstream_tree)
 UPSTREAM_REF=$(read_cfg upstream_ref)
+# 上游仓库里对应设备的子目录名(显式声明; 上游含 pudding/nezha/pandora/popsicle 多台设备,
+# 不能靠模糊匹配 —— 会选错设备)
+UPSTREAM_SUBDIR=$(read_cfg upstream_subdir 2>/dev/null || echo "")
 BUILD_TARGETS=$(read_cfg defaults.build_targets)
 BOOTIMG=$(read_cfg defaults.bootimg)
 
@@ -44,12 +47,23 @@ echo "==> 1/5 准备设备树"
 mkdir -p "$DEVICE_DIR"
 if [ -n "$UPSTREAM_TREE" ]; then
 	echo "    从上游克隆设备树: $UPSTREAM_TREE ($UPSTREAM_REF)"
-	git clone --depth=1 -b "$UPSTREAM_REF" "$UPSTREAM_TREE" /tmp/upstream-device-tree || \
-		git clone --depth=1 "$UPSTREAM_TREE" /tmp/upstream-device-tree
-	# 上游仓库可能是多设备合集, 尝试找到对应子目录
-	SRC_DEV=$(find /tmp/upstream-device-tree -maxdepth 3 -type d -name "*${DEVICE_DIR##*/}*" | head -1)
-	[ -z "$SRC_DEV" ] && SRC_DEV=$(find /tmp/upstream-device-tree -maxdepth 2 -type d -name "twrp_device_xiaomi_*" | head -1)
-	[ -n "$SRC_DEV" ] && cp -a "$SRC_DEV/." "$DEVICE_DIR/" && echo "    已复制上游设备树: $SRC_DEV"
+	if ! git clone --depth=1 -b "$UPSTREAM_REF" "$UPSTREAM_TREE" /tmp/upstream-device-tree; then
+		echo "::error::克隆上游设备树失败: $UPSTREAM_TREE @ $UPSTREAM_REF"; exit 1
+	fi
+	# 上游是多设备合集(pudding/nezha/pandora/popsicle), 必须按声明的子目录取 ——
+	# 模糊匹配会拿到别的设备(例如回退逻辑曾可能选中 nezha)
+	if [ -z "$UPSTREAM_SUBDIR" ]; then
+		echo "::error::devices.yml 未声明 upstream_subdir (上游含多台设备, 不能猜)"
+		ls /tmp/upstream-device-tree | sed "s/^/    可用: /"
+		exit 1
+	fi
+	SRC_DEV="/tmp/upstream-device-tree/$UPSTREAM_SUBDIR"
+	if [ ! -d "$SRC_DEV" ]; then
+		echo "::error::上游设备树子目录不存在: $UPSTREAM_SUBDIR"
+		ls /tmp/upstream-device-tree | sed "s/^/    可用: /"
+		exit 1
+	fi
+	cp -a "$SRC_DEV/." "$DEVICE_DIR/" && echo "    已复制上游设备树: $SRC_DEV"
 fi
 
 # 叠加本仓库的改动文件(覆盖上游同名文件)
