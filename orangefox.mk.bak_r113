@@ -21,7 +21,7 @@
 LOCAL_CFLAGS += -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
 
 # Canonical release version
-FOX_INTERNAL_RELEASE := R12.0
+FOX_INTERNAL_RELEASE := R11.3
 LOCAL_CFLAGS += -DFOX_INTERNAL_RELEASE='"$(FOX_INTERNAL_RELEASE)"'
 
 ifneq ($(FOX_MAINTAINER_PATCH_VERSION),)
@@ -681,11 +681,12 @@ ifneq ($(FOX_MISCELLANEOUS_ROOT_DIRECTORY),)
     LOCAL_CFLAGS += -DFOX_MISCELLANEOUS_ROOT_DIRECTORY='"$(FOX_MISCELLANEOUS_ROOT_DIRECTORY)"'
 endif
 
-# [本地改动] 无条件启用"解密前读取设置并应用主题"。
-# 原本靠 $(FOX_ALLOW_EARLY_SETTINGS_LOAD) 变量传递, 但实测该变量
-# 在 orangefox.mk 被解析时不可见(ninja 里 0 次出现) ⇒ 早期加载代码
-# 根本没编译进去, 导致加密设备解密页永远用 themes/style.xml 的基础色。
-LOCAL_CFLAGS += -DFOX_ALLOW_EARLY_SETTINGS_LOAD='"1"'
+ifeq ($(FOX_ALLOW_EARLY_SETTINGS_LOAD),1)
+    #ifeq ($(FOX_SETTINGS_ROOT_DIRECTORY),)
+    #   $(error You cannot use "FOX_ALLOW_EARLY_SETTINGS_LOAD" without "FOX_SETTINGS_ROOT_DIRECTORY")
+    #endif
+    LOCAL_CFLAGS += -DFOX_ALLOW_EARLY_SETTINGS_LOAD='"1"'
+endif
 
 # whether to wipe /metadata after formatting data
 ifeq ($(OF_WIPE_METADATA_AFTER_DATAFORMAT),1)

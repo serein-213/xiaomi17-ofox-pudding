@@ -927,6 +927,10 @@ extern "C" int gui_loadResources(void)
 	if (PartitionManager.Mount_Settings_Storage(false))
 		DataManager::ReadSettingsFile();
 #else
+	// [本地修复] LoadPersistValues 会检查 <persist>/.foxs 是否存在,
+	// 前提是 /persist 已挂载; 不挂载则直接返回 -1, 解密页面拿不到用户的主题设置
+	// (表现为: 解密页用默认主题, 解密完成后才切换成用户设置的主题)
+	PartitionManager.Mount_By_Path("/persist", false);
 	DataManager::LoadPersistValues();
 #endif
 	TWFunc::FoxThemeCheck();

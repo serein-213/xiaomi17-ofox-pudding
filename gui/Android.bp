@@ -31,7 +31,8 @@ cc_library_static {
         "-Wno-unused-function",
         "-Wno-unused-variable",
         "-D_USE_SYSTEM_ZIPARCHIVE",
-        "-DTWRES=\"/twres/\""
+        "-DTWRES=\"/twres/\"",
+        "-DFOX_ALLOW_EARLY_SETTINGS_LOAD=1",
     ],
     include_dirs: [
         "bootable/recovery/otautil/include",
