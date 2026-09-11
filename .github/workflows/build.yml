@@ -110,16 +110,52 @@ jobs:
 
       - name: 初始化源码树(浅克隆)
         # 注意: 不能设 working-directory —— 该目录由本步创建, 否则 GitHub 无法启动
+        # 本步自带诊断: 任何失败都会以 ::error:: 注解上报, 便于在无法取完整日志时定位
         run: |
+          set -o pipefail
+          export PATH="$HOME/bin:$PATH"
+
+          echo "===> 0/4 环境检查"
+          df -h / | tail -1
+          command -v git python3 curl || true
+
+          echo "===> 1/4 准备 repo 工具"
+          if ! command -v repo >/dev/null 2>&1; then
+            mkdir -p "$HOME/bin"
+            if ! curl -fsSL --retry 3 --retry-delay 2 \
+                 https://storage.googleapis.com/git-repo-downloads/repo -o "$HOME/bin/repo"; then
+              echo "::error::无法下载 repo 工具 (storage.googleapis.com 不可达)"
+              exit 1
+            fi
+            chmod +x "$HOME/bin/repo"
+          fi
+          repo --version 2>&1 | head -2
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          echo "===> 2/4 预检 manifest 可达性与分支"
+          echo "  manifest: $MANIFEST"
+          echo "  branch  : $FOX_BRANCH"
+          if ! git ls-remote --heads "$MANIFEST" "$FOX_BRANCH" | head -3; then
+            echo "::error::manifest 仓库或分支不可达: $MANIFEST @ $FOX_BRANCH"
+            exit 1
+          fi
+
+          echo "===> 3/4 repo init (官方同步脚本同款参数)"
           mkdir -p "$SRC_ROOT" && cd "$SRC_ROOT"
           git config --global user.name  "ci-builder"
           git config --global user.email "ci@localhost"
           git config --global http.postBuffer 524288000
-          repo init --depth=1 -u "$MANIFEST" -b "$FOX_BRANCH" \
-                    --git-lfs=false --no-clone-bundle
-          echo "==> repo sync (浅克隆, 只取一层历史)"
-          repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags --force-sync --optimized-fetch --prune
-          echo "==> 源码树大小:"; du -sh . 2>/dev/null
+          if ! repo init --depth=1 -u "$MANIFEST" -b "$FOX_BRANCH" 2>&1 | tail -25; then
+            echo "::error::repo init 失败 (见上方输出)"
+            exit 1
+          fi
+
+          echo "===> 4/4 repo sync"
+          if ! repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags 2>&1 | tail -40; then
+            echo "::error::repo sync 失败 (见上方输出)"
+            exit 1
+          fi
+          echo "===> 源码树大小:"; du -sh . 2>/dev/null
 
       - name: 构建
         env:
