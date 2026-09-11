@@ -51,7 +51,8 @@ cc_library_static {
         "system/core/libcutils/include",
         "system/core/include",
         "external/freetype/include",
-        "external/libpng"
+        "external/libpng",
+            "system/vold"
 
     ],
     srcs: [
