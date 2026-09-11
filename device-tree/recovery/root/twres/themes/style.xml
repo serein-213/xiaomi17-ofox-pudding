@@ -27,8 +27,8 @@
 		<image name="unlock_icon" filename="Light/FullscreenIcons/unlock_icon" retainaspect="1"/>
 
 		<!-- Keyboard -->
-		<image name="keyback" filename="SVG/Keyboard/key_butts_cream.svg"/>
-		<image name="keyback_num" filename="SVG/Keyboard/key_num_cream.svg"/>
+		<image name="keyback" filename="SVG/Keyboard/key_butts_dark.svg"/>
+		<image name="keyback_num" filename="SVG/Keyboard/key_num_dark.svg"/>
 
 		<!-- Progress -->
 		<animation name="progress" filename="Light/Progress/indeterminate"/>
