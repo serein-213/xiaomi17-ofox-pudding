@@ -956,7 +956,7 @@ extern "C" int gui_loadResources(void)
 		{
 			TWFunc::copy_file(persist_theme, "/twres/themes/style.xml", 0, false);
 			LOGINFO("Decrypt theme: restored user theme from %s\n", persist_theme.c_str());
-			printf("DECRYPT_THEME_APPLIED=%s\n", persist_theme.c_str());
+			LOGINFO("DECRYPT_THEME_APPLIED=%s\n", persist_theme.c_str());
 		}
 		else
 		{
@@ -1033,19 +1033,6 @@ extern "C" int gui_loadResources(void)
 #else
 	DataManager::LoadPersistValues();
 #endif
-	// [本地修复] SYNC_THEME_MIRROR: 此时 /sdcard 已解密可读, 把用户主题同步一份到 /persist,
-	// 供下次解密阶段(读不到 /sdcard 时)恢复, 解决"解密页配色不跟随用户皮肤"。
-	{
-		const string user_theme = "/sdcard/Fox/.theme/style.xml";
-		const string mirror = "/persist/Fox/.theme/style.xml";
-		if (TWFunc::Path_Exists(user_theme))
-		{
-			if (!TWFunc::Path_Exists("/persist/Fox/.theme"))
-				mkdir("/persist/Fox/.theme", 0777);
-			TWFunc::copy_file(user_theme, mirror, 0, false);
-			printf("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
-		}
-	}
 	PageManager::LoadLanguage(DataManager::GetStrValue("tw_language"));
 	GUIConsole::Translate_Now();
 #endif
@@ -1097,6 +1084,19 @@ error:
 
 extern "C" int gui_start(void)
 {
+	// [本地修复] SYNC_THEME_MIRROR: 此时 /sdcard 已解密可读, 把用户主题同步一份到 /persist,
+	// 供下次解密阶段(读不到 /sdcard 时)恢复, 解决"解密页配色不跟随用户皮肤"。
+	{
+		const string user_theme = "/sdcard/Fox/.theme/style.xml";
+		const string mirror = "/persist/Fox/.theme/style.xml";
+		if (TWFunc::Path_Exists(user_theme))
+		{
+			if (!TWFunc::Path_Exists("/persist/Fox/.theme"))
+				mkdir("/persist/Fox/.theme", 0777);
+			TWFunc::copy_file(user_theme, mirror, 0, false);
+			LOGINFO("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
+		}
+	}
 	return gui_startPage("main", 1, 0);
 }
 
