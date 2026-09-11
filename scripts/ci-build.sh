@@ -208,12 +208,38 @@ ls -la build/soong/soong_ui.bash 2>&1 | sed 's/^/      /' || true
 echo "      M_BIN 可执行: $([ -x "$M_BIN" ] && echo 是 || echo 否)"
 if [ -x "$M_BIN" ]; then
 	echo "    → 使用 build/soong/bin/m"
+	set +e
 	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" \
 	    TARGET_DEVICE="${TARGET_DEVICE:?}" \
 	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" \
 	    TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
 	    TARGET_BUILD_TYPE=release \
 	    "$M_BIN" -j"$JOBS" $BUILD_TARGETS
+	BUILD_RC=$?
+	set -e
+	if [ "$BUILD_RC" -ne 0 ]; then
+		# _wrap_build 把详细输出写进 out/ 的日志, 只在失败时打一行提示。
+		# 这里把真实报错倒出来, 否则 CI 日志里只有 "failed to build some targets"。
+		echo "::group::构建失败详情 (rc=$BUILD_RC)"
+		for f in out/error.log out/soong.log out/build_error.log; do
+			if [ -f "$f" ]; then
+				echo "--- $f (尾 80 行) ---"
+				tail -80 "$f" | sed 's/^/    /'
+			fi
+		done
+		for g in out/verbose.log.gz out/soong.log.gz; do
+			if [ -f "$g" ]; then
+				echo "--- $g (尾 120 行) ---"
+				zcat "$g" 2>/dev/null | tail -120 | sed 's/^/    /'
+			fi
+		done
+		echo "--- out/ 下的日志清单 ---"
+		ls -la out/*.log out/*.gz 2>/dev/null | sed 's/^/    /' || true
+		echo "--- 最后一次 ninja 输出(若存在) ---"
+		find out -maxdepth 2 -name "*.ninja_log" -o -maxdepth 2 -name "ninja_log" 2>/dev/null | head -3 | sed 's/^/    /'
+		echo "::endgroup::"
+		exit "$BUILD_RC"
+	fi
 elif [ -x build/soong/soong_ui.bash ]; then
 	echo "    → 回退 soong_ui.bash --make-mode (build/soong/bin/m 不可执行)"
 	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" TARGET_DEVICE="${TARGET_DEVICE:?}" \
