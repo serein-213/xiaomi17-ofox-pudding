@@ -95,6 +95,14 @@ for f in "$BOOTIMG" vendor_boot.img boot.img; do
 	[ -f "$OUT_DIR/$f" ] && cp "$OUT_DIR/$f" "$REPO_ROOT/artifacts/${NAME}_$f" && \
 		echo "    ✓ ${NAME}_$f ($(du -h "$OUT_DIR/$f" | cut -f1))"
 done
+
+# OrangeFox 生成的卡刷安装包(内含完整 recovery.img, 可在 recovery 里直接刷)
+for z in "$OUT_DIR"/OrangeFox-*.zip "$OUT_DIR"/TWRP-*.zip; do
+	[ -f "$z" ] || continue
+	bn=$(basename "$z")
+	cp "$z" "$REPO_ROOT/artifacts/${NAME}_${bn}" && \
+		echo "    ✓ ${NAME}_${bn} ($(du -h "$z" | cut -f1))  [卡刷包]"
+done
 ( cd "$REPO_ROOT/artifacts" && sha256sum ./* > SHA256SUMS.txt 2>/dev/null ) || true
 ls -la "$REPO_ROOT/artifacts"
 echo "==> 完成"
