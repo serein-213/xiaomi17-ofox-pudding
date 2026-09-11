@@ -24,7 +24,7 @@ permissions:
 
 env:
   FOX_BRANCH: twrp-16
-  MANIFEST: https://github.com/serein-213/platform_manifest_twrp_aosp.git  # fork, 防上游删除
+  MANIFEST: https://github.com/OrangeFox16/platform_manifest_twrp_aosp.git
   SRC_ROOT: ${{ github.workspace }}/fox_16.0
 
 jobs:
@@ -135,10 +135,15 @@ jobs:
           echo "===> 2/4 预检 manifest 可达性与分支"
           echo "  manifest: $MANIFEST"
           echo "  branch  : $FOX_BRANCH"
-          if ! git ls-remote --heads "$MANIFEST" "$FOX_BRANCH" | head -3; then
-            echo "::error::manifest 仓库或分支不可达: $MANIFEST @ $FOX_BRANCH"
+          # 注意: git ls-remote <url> <branch> 对**不存在的分支**不返回非零, 必须检查输出是否为空
+          BRANCH_REF=$(git ls-remote --heads "$MANIFEST" "$FOX_BRANCH" 2>/dev/null || true)
+          if [ -z "$BRANCH_REF" ]; then
+            echo "::error::manifest 分支不存在: $MANIFEST @ $FOX_BRANCH"
+            echo "  该仓库可用分支:"
+            git ls-remote --heads "$MANIFEST" 2>/dev/null | awk '{print "    "$2}' | head -12
             exit 1
           fi
+          echo "  ✓ 分支存在: $BRANCH_REF"
 
           echo "===> 3/4 repo init (官方同步脚本同款参数)"
           mkdir -p "$SRC_ROOT" && cd "$SRC_ROOT"

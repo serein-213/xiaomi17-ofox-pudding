@@ -10,11 +10,13 @@
 #   upstream_tree : 上游设备树仓库 (克隆下来后我们叠加改动)
 #   upstream_ref  : 上游分支/tag
 
-# ⚠ 防上游删除: manifest 与设备树均指向**本账号的 fork**.
-#    上游若删除原仓库, 构建不受影响 (fork 是独立副本).
-#    如需同步上游更新: gh repo sync serein-213/twrp-xiaomi-17-series
+# 依赖源策略:
+#   · manifest → OrangeFox16 官方仓库(组织仓库, 风险极低; 且其 twrp-16 分支是最新维护的)
+#   · 设备树   → 本账号 fork(serein-213/twrp-xiaomi-17-series)
+#                这是**个人仓库**, 存在被删风险, 故用 fork 固定住
+#                如需同步上游更新: gh repo sync serein-213/twrp-xiaomi-17-series
 defaults:
-  manifest_url: https://github.com/serein-213/platform_manifest_twrp_aosp.git
+  manifest_url: https://github.com/OrangeFox16/platform_manifest_twrp_aosp.git
   manifest_branch: twrp-16
   build_targets: adbd recoveryimage
   bootimg: recovery.img
