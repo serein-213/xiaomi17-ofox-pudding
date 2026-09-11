@@ -77,7 +77,7 @@ fi
 echo "    叠加本仓库 device-tree/ 改动"
 cp -a "$REPO_ROOT/device-tree/." "$DEVICE_DIR/"
   # 皮肤完全跟随 R12.0: 上游设备树带的 Night 皮肤是 R11.3 形态(图标定义不全), 删除之
-  rm -f "$DEVICE_DIR/recovery/root/twres/themes/styles/Night.xml" && echo "    已移除 Night 皮肤(完全跟随 R12.0 的 5 套皮肤)'
+  rm -f "$DEVICE_DIR/recovery/root/twres/themes/styles/Night.xml"                                               
 
 # ---------- 2. 应用源码补丁 ----------
 echo "==> 2/5 应用源码补丁"
