@@ -941,6 +941,8 @@ extern "C" int gui_loadResources(void)
 	// (/twres 是 rootfs, 可写), 使解密页与应用内主题保持一致。
 	{
 		string skin = DataManager::GetStrValue("theme_style");
+		printf("DECRYPT_THEME_PROBE skin=[%s] path_ok=%d\n", skin.c_str(),
+		       TWFunc::Path_Exists("/twres/themes/styles/" + (skin.empty() ? string("Dark") : skin) + ".xml") ? 1 : 0);
 		if (!skin.empty())
 		{
 			string src = "/twres/themes/styles/" + skin + ".xml";
