@@ -1,0 +1,66 @@
+diff --git a/cmds/servicemanager/ServiceManager.cpp b/cmds/servicemanager/ServiceManager.cpp
+index 59c4d53..d05443d 100644
+--- a/cmds/servicemanager/ServiceManager.cpp
++++ b/cmds/servicemanager/ServiceManager.cpp
+@@ -345,7 +345,11 @@ static bool meetsDeclarationRequirements(const Access::CallingContext& ctx,
+         return true;
+     }
+ 
+-    return isVintfDeclared(ctx, name);
++    /* [0030] recovery: 跳过 VINTF 声明要求(ramdisk 清单不含全部设备 HAL) */
++    if (!isVintfDeclared(ctx, name)) {
++        ALOGW("%s not VINTF-declared (%s) - allowed in recovery build", ctx.toDebugString().c_str(), name.c_str());
++    }
++    return true;
+ }
+ #endif  // !VENDORSERVICEMANAGER
+ 
+@@ -1129,8 +1133,10 @@ Status ServiceManager::tryUnregisterService(const std::string& name, const sp<IB
+ 
+ Status ServiceManager::canAddService(const Access::CallingContext& ctx, const std::string& name,
+                                      std::optional<std::string>* accessor) {
++    /* [0030] recovery 专用 servicemanager: 放宽 SELinux/上下文门控, 否则设备原生 HAL
++     * (nfc / strongbox / vibratorfeature 等) 在 u:r:recovery:s0 下无法注册. */
+     if (!mAccess->canAdd(ctx, name)) {
+-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied for service.");
++        ALOGW("%s canAdd denied for %s - allowed in recovery build", ctx.toDebugString().c_str(), name.c_str());
+     }
+ #ifndef VENDORSERVICEMANAGER
+     *accessor = getVintfAccessorName(name);
+@@ -1146,8 +1152,9 @@ Status ServiceManager::canAddService(const Access::CallingContext& ctx, const st
+ 
+ Status ServiceManager::canFindService(const Access::CallingContext& ctx, const std::string& name,
+                                       std::optional<std::string>* accessor) {
++    /* [0030] recovery: 放行查找门控 */
+     if (!mAccess->canFind(ctx, name)) {
+-        return Status::fromExceptionCode(Status::EX_SECURITY, "SELinux denied for service.");
++        ALOGW("%s canFind denied for %s - allowed in recovery build", ctx.toDebugString().c_str(), name.c_str());
+     }
+ #ifndef VENDORSERVICEMANAGER
+     *accessor = getVintfAccessorName(name);
+diff --git a/cmds/servicemanager/servicemanager.rc b/cmds/servicemanager/servicemanager.rc
+index 6c450ab..6aba48e 100644
+--- a/cmds/servicemanager/servicemanager.rc
++++ b/cmds/servicemanager/servicemanager.rc
+@@ -1,15 +1,8 @@
++# [rec 适配] servicemanager (ramdisk 自带 A16 版): 我方全部客户端与之同代 ✓
++# 注: 曾尝试换设备原生(新)服务端 -> 我方旧客户端 getDeclaredInstances BAD_TYPE => 混代不可行(2026-09-10 实测)
+ service servicemanager /system/bin/servicemanager
+-    class core animation
+-    user system
+-    group system readproc
+-    critical
+-    file /dev/kmsg w
++    disabled
++    user root
++    group root readproc
+     onrestart setprop servicemanager.ready false
+-    onrestart restart --only-if-running apexd
+-    onrestart restart audioserver
+-    onrestart restart gatekeeperd
+-    onrestart class_restart --only-enabled main
+-    onrestart class_restart --only-enabled hal
+-    onrestart class_restart --only-enabled early_hal
+-    task_profiles ProcessCapacityHigh
+-    shutdown critical
++    seclabel u:r:servicemanager:s0

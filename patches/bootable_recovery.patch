@@ -1,0 +1,477 @@
+diff --git a/Android.bp b/Android.bp
+index 83cae59e..15b1b82e 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -58,6 +58,7 @@ license {
+ }
+ 
+ cc_defaults {
++    header_libs: ["libvold_headers"],
+     name: "recovery_defaults",
+ 
+     cflags: [
+diff --git a/data.cpp b/data.cpp
+index 17cc27d4..9ff21686 100644
+--- a/data.cpp
++++ b/data.cpp
+@@ -1535,6 +1535,37 @@ int DataManager::GetMagicValue(const string& varName, string& value)
+ 		value = tmp;
+ 		return 0;
+ 	}
++	/* [0139] 挖孔屏用的分列时钟: hh 显示在挖孔左侧、mm 在右侧.
++	   本机(小米17)挖孔在屏幕正中, 居中显示的时间会被完全遮挡, 而居左/居右
++	   用户希望保留"居中观感" ⇒ 拆成两半分别贴孔左右, 由主题决定摆放位置.
++	   小时制规则与 tw_time 完全一致(遵循 tw_military_time 设置). */
++	else if (varName == "tw_time_hh")
++	{
++		char tmp[8];
++		struct tm *current;
++		time_t now;
++		int tw_military_time;
++		now = time(0);
++		current = localtime(&now);
++		GetValue(TW_MILITARY_TIME, tw_military_time);
++		if (tw_military_time == 1)
++			sprintf(tmp, "%d", current->tm_hour);
++		else
++			sprintf(tmp, "%d", current->tm_hour % 12 == 0 ? 12 : current->tm_hour % 12);
++		value = tmp;
++		return 0;
++	}
++	else if (varName == "tw_time_mm")
++	{
++		char tmp[8];
++		struct tm *current;
++		time_t now;
++		now = time(0);
++		current = localtime(&now);
++		sprintf(tmp, "%02d", current->tm_min);
++		value = tmp;
++		return 0;
++	}
+ 	else if (varName == "tw_cpu_temp")
+ 	{
+ 		int tw_no_cpu_temp;
+diff --git a/exclude.cpp b/exclude.cpp
+index 5a599742..791df98e 100644
+--- a/exclude.cpp
++++ b/exclude.cpp
+@@ -24,6 +24,7 @@ extern "C" {
+ #include <dirent.h>
+ #include <errno.h>
+ #include <string>
++#include <cstring>
+ #include <vector>
+ #include "exclude.hpp"
+ #include "twrp-functions.hpp"
+@@ -75,6 +76,13 @@ uint64_t TWExclude::Get_Folder_Size(const string& Path) {
+ 	while ((de = readdir(d)) != NULL) {
+ 		FullPath = Path + "/";
+ 		FullPath += de->d_name;
++		/* [0129] 排除判定前移. check_skip_dirs() 是纯字符串比较, 不依赖 lstat 结果.
++		   原顺序是"先 lstat 再判排除", 而被排除的路径(例如 user_de 下面那些
++		   逐 app 的条目)在 SELinux 下每次 lstat 都被拒绝并产生一条 type=1400
++		   audit 日志 -- 实测启动阶段累计 1759 条 / 12.1 秒, 是启动页停留过长的主因.
++		   前移后输出数字与备份内容完全不变(被排除项本来贡献 0), 只是不再白扫. */
++		if (check_skip_dirs(FullPath))
++			continue;
+ 		if (lstat(FullPath.c_str(), &st)) {
+ 
+ 			// DJ9: avoid continued spamming of the log screen after a few reports
+@@ -95,12 +103,10 @@ uint64_t TWExclude::Get_Folder_Size(const string& Path) {
+ 
+ 			continue;
+ 		}
+-		if (!check_skip_dirs(FullPath)) {
+-			if ((st.st_mode & S_IFDIR) && de->d_type != DT_SOCK) {
+-				dusize += Get_Folder_Size(FullPath);
+-			} else if (st.st_mode & S_IFREG || st.st_mode & S_IFLNK) {
+-				dusize += (uint64_t)(st.st_size);
+-			}
++		if ((st.st_mode & S_IFDIR) && de->d_type != DT_SOCK) {
++			dusize += Get_Folder_Size(FullPath);
++		} else if (st.st_mode & S_IFREG || st.st_mode & S_IFLNK) {
++			dusize += (uint64_t)(st.st_size);
+ 		}
+ 	}
+ 	closedir(d);
+@@ -117,6 +123,7 @@ bool TWExclude::check_absolute_skip_dirs(const string& path) {
+ 
+ bool TWExclude::check_skip_dirs(const string& path) {
+ 	string normalized = TWFunc::Remove_Trailing_Slashes(path);
++
+ 	size_t slashIdx = normalized.find_last_of('/');
+ 	if (slashIdx != std::string::npos && slashIdx+1 < normalized.size()) {
+ 		if (check_relative_skip_dirs(normalized.substr(slashIdx+1)))
+diff --git a/gui/Android.bp b/gui/Android.bp
+index d7a69092..db774f7c 100644
+--- a/gui/Android.bp
++++ b/gui/Android.bp
+@@ -20,6 +20,7 @@ libguitwrp_defaults {
+ }
+ 
+ cc_library_static {
++    header_libs: ["libvold_headers"],
+     name: "libguitwrp",
+     defaults: ["libguitwrp_defaults", "twrp_defaults"],
+     rtti: true,
+diff --git a/gui/action.cpp b/gui/action.cpp
+index d7ae2ac4..78cb01ac 100755
+--- a/gui/action.cpp
++++ b/gui/action.cpp
+@@ -1454,6 +1454,7 @@ void GUIAction::reinject_after_flash()
+     }
+ }
+ 
++#ifdef TW_OZIP_DECRYPT_KEY
+ int GUIAction::ozip_decrypt(string zip_path)
+ {
+    if (!TWFunc::Path_Exists(Fox_Bin_Dir + "/ozip_decrypt"))
+@@ -1465,6 +1466,7 @@ int GUIAction::ozip_decrypt(string zip_path)
+    gui_msg("ozip_decrypt_finish=Ozip Decryption Finished!");
+    return 0;
+ }
++#endif
+ 
+ int GUIAction::flash(std::string arg)
+ {
+@@ -1481,6 +1483,7 @@ int GUIAction::flash(std::string arg)
+       string zip_filename = (slashpos == string::npos) ? zip_path : zip_path.substr(slashpos + 1);
+       operation_start("Flashing");
+ 
++#ifdef TW_OZIP_DECRYPT_KEY
+       if ((zip_path.substr(zip_path.size() - 4, 4)) == "ozip")
+ 	{
+ 		if ((ozip_decrypt(zip_path)) != 0)
+@@ -1495,6 +1498,7 @@ int GUIAction::flash(std::string arg)
+ 			break;
+ 		}
+ 	}
++#endif
+ 
+       DataManager::SetValue("tw_filename", zip_path);
+       DataManager::SetValue("tw_file", zip_filename);
+diff --git a/minuitwrp/graphics_fbdev.cpp b/minuitwrp/graphics_fbdev.cpp
+index 499e0eaf..72876e9e 100644
+--- a/minuitwrp/graphics_fbdev.cpp
++++ b/minuitwrp/graphics_fbdev.cpp
+@@ -59,7 +59,7 @@ minui_backend* open_fbdev() {
+     return &my_backend;
+ }
+ 
+-static void fbdev_blank(minui_backend* backend __unused, bool blank)
++static void fbdev_blank(minui_backend* backend __unused, bool blank __unused)
+ {
+ #if defined(TW_NO_SCREEN_BLANK) && defined(TW_BRIGHTNESS_PATH) && defined(TW_MAX_BRIGHTNESS)
+     int fd;
+diff --git a/minuitwrp/truetype.cpp b/minuitwrp/truetype.cpp
+index d224fbb1..fa29f67a 100644
+--- a/minuitwrp/truetype.cpp
++++ b/minuitwrp/truetype.cpp
+@@ -488,6 +488,10 @@ int twrpTruetype::gr_ttf_measureEx(const char *s, void *font) {
+ 	TrueTypeFont *f = (TrueTypeFont *)font;
+ 	int res = -1;
+ 
++	/* [0018] font 可能为 NULL: GUIInput::UpdateDisplayText() 在字体资源失效时会传空指针,
++	 * 原代码直接 pthread_mutex_lock(&f->mutex) -> lock(NULL+0x50) SIGSEGV */
++	if (f == nullptr) return res;
++
+ 	pthread_mutex_lock(&f->mutex);
+ 	gr_ttf_string_cache_truncate(f);
+ 	StringCacheEntry *e = gr_ttf_string_cache_get(f, s, -1);
+@@ -500,6 +504,7 @@ int twrpTruetype::gr_ttf_measureEx(const char *s, void *font) {
+ 
+ int twrpTruetype::gr_ttf_maxExW(const char *s, void *font, int max_width) {
+ 	TrueTypeFont *f = (TrueTypeFont *)font;
++	if (f == nullptr) return 0;   /* [0018] */
+ 	TrueTypeCacheEntry *ent;
+ 	int max_bytes = 0, total_w = 0;
+ 	int utf_bytes, prev_utf_bytes = 0;
+@@ -553,6 +558,7 @@ int twrpTruetype::gr_ttf_textExWH(void *context, int x, int y,
+ 	GGLContext *gl = (GGLContext *)context;
+ 	TrueTypeFont *font = (TrueTypeFont *)pFont;
+ 	const GRSurface *gr_draw = (const GRSurface*) gr_draw_surface;
++	if (font == nullptr) return -1;   /* [0018] */
+ 
+ 	// not actualy max width, but max_width + x
+ 	if(max_width != -1)
+@@ -637,6 +643,7 @@ int twrpTruetype::gr_ttf_textExWH(void *context, int x, int y,
+ int twrpTruetype::gr_ttf_getMaxFontHeight(void *font) {
+ 	int res;
+ 	TrueTypeFont *f = (TrueTypeFont *)font;
++	if (f == nullptr) return 0;   /* [0018] */
+ 
+ 	pthread_mutex_lock(&f->mutex);
+ 
+diff --git a/partition.cpp b/partition.cpp
+index 5185200f..c1227e7f 100644
+--- a/partition.cpp
++++ b/partition.cpp
+@@ -782,6 +782,12 @@ void TWPartition::Setup_Data_Partition(bool Display_Error) {
+ }
+ 
+ void TWPartition::Set_FBE_Status() {
++	/* [0040] 回退 #38 的错误改动: 本设备(metadata/FBE-DE)在 Decrypt_FBE_DE() 成功后,
++	   数据分区已经可以通过解密后的块设备(dm-18)挂载, 因此必须置
++	   Is_Decrypted/TW_IS_DECRYPTED=1, 否则 TWPartition::Mount() 会去摸原始加密设备
++	   (/dev/block/sda34) 并失败:
++	     I:Can't probe device /dev/block/sda34  /  I:Actual block device: '/dev/block/sda34'
++	   #38 曾把它改成 false 以求"解密按钮常驻", 结果连挂载都坏了 -> 回退. */
+ 	DataManager::SetValue(TW_IS_DECRYPTED, 1);
+ 	Is_Encrypted = true;
+ 	Is_Decrypted = true;
+diff --git a/partitionmanager.cpp b/partitionmanager.cpp
+index 73a16d99..0becff38 100755
+--- a/partitionmanager.cpp
++++ b/partitionmanager.cpp
+@@ -104,6 +104,10 @@ extern "C" {
+ #include "gui/rapidxml.hpp"
+ #ifdef TW_INCLUDE_FBE
+ #include "Decrypt.h"
++
++/* [0126] 定义在 system/vold/KeyStorage.cpp 的 android::vold 命名空间内. */
++namespace android { namespace vold { bool fox_wait_for_keystore(int timeout_sec); } }
++
+ #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
+ 	#ifdef USE_FSCRYPT
+ 	#include "cryptfs.h"
+@@ -686,15 +690,25 @@ void TWPartitionManager::Decrypt_Data() {
+ #ifdef USE_FSCRYPT
+ 			std::vector<std::string> user_devices;
+ 			std::vector<bool> device_aliased;
+-			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
++			/* [0042] cold boot 时 vold 的 metadata 解密需要 vendor 的 keymint HAL
++			   (keystore2 -> keymint 解包 DE 密钥), 而该 HAL 往往比这行代码晚就绪 ->
++			   首次失败后原代码不再重试, 造成 /data 永久无法挂载:
++			     "Unable to decrypt metadata encryption"
++			   这里做有界重试 (10 x 1s), 等 HAL 起来后自然成功. */
++						if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+ 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+ 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
+ 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
+ #endif
+ 				Decrypt_Data->Is_Decrypted = true; // Needed to make the mount function work correctly
+-				int retry_count = 10;
++				/* [0041] 原重试窗口是 usleep(500)=0.5ms x10 —— 太短:
++				   本设备的 vold 线程(vold_prepare_subdirs)在 metadata 解密后仍在 /data 内
++				   工作(relabel /data/misc_de/0/...), 此时 Mount() 会因挂载点被占用返回
++				   "Failed to mount '/data' (Device or resource busy)" 而彻底放弃.
++				   改为 50ms x 60 = 3s 窗口, 等 vold 收尾. */
++				int retry_count = 60;
+ 				while (!Decrypt_Data->Mount(false) && --retry_count)
+-					usleep(500);
++					usleep(50000);
+ 				if (Decrypt_Data->Mount(false)) {
+ 					if (!Decrypt_Data->Decrypt_FBE_DE()) {
+ 						LOGERR("Unable to decrypt FBE device\n");
+@@ -2344,12 +2358,110 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+   Set_Crypto_State();
+   Set_Crypto_Type("block");
+ 
++  /* [0052] 确保解密所需的 vendor HAL 链就绪.
++     本机 vendor HAL(keymint 等)必须经 LD_PRELOAD shim 包装才能通过 servicemanager 注册
++     (libbinder 代次不匹配: "Mixing copies of libbinder"), 而启动阶段做的包装可能被
++     TWRP 后续的 mount_all 覆盖. 这里在解密前补一次, 并等待 keymint 进入 running,
++     使 PIN 解密不再依赖启动时序. */
++  system("sh /sm17/wrap_hal.sh >/dev/null 2>&1 &");
++  for (int hal_wait = 0; hal_wait < 25; ++hal_wait) {
++      char st[PROPERTY_VALUE_MAX] = {};
++      property_get("init.svc.vendor.keymint", st, "");
++      if (strcmp(st, "running") == 0) {
++          LOGINFO("Decrypt_Device: vendor.keymint is running (after %ds)\n", hal_wait);
++          break;
++      }
++      sleep(1);
++  }
++
++  /* [0050] 状态自愈 + 解密设备挂载:
++     本机(metadata/FBE-DE)启动时 Set_FBE_Status() 可能在 Key_Directory 尚未解析时执行,
++     走空分支把 TW_IS_FBE 置 0; 并且 UnMount_Main_Partitions() 之后 /data 的
++     Decrypted_Block_Device(dm-18) 状态也可能丢失. 后果是进入本函数后:
++       - TW_IS_FBE=0  -> 用户 PIN 被误判为 FDE 路径 -> 永远报"密码错误"
++       - Mount_By_Path("/data") 去打原始设备(sda34) -> 失败 -> 直接 return -1
++     这里在判定前用 /data 分区自身的 Key_Directory/Decrypted_Block_Device 修正状态. */
++  {
++      TWPartition *dp = Find_Partition_By_Path("/data");
++      if (dp != NULL) {
++          if (!dp->Key_Directory.empty()) {
++              if (!dp->Is_FBE) {
++                  dp->Is_FBE = true;
++                  LOGINFO("Decrypt_Device: re-asserted Is_FBE (Key_Directory=%s)\n", dp->Key_Directory.c_str());
++              }
++              DataManager::SetValue(TW_IS_FBE, 1);
++              DataManager::SetValue(TW_IS_ENCRYPTED, 1);
++          }
++          if (!dp->Decrypted_Block_Device.empty()) {
++              dp->Is_Encrypted = true;
++              dp->Is_Decrypted = true;
++              LOGINFO("Decrypt_Device: using decrypted device %s for /data\n", dp->Decrypted_Block_Device.c_str());
++          } else {
++              /* [0051] 自给自足: 若解密块设备不存在(启动时 HAL 未就绪 -> DE 解密没跑成),
++                 就在这里当场做一次 metadata 解密, 不再依赖启动时序. */
++              LOGINFO("Decrypt_Device: no decrypted device, running metadata decrypt now\n");
++              TWPartition *kdp = Find_Partition_By_Path(dp->Key_Directory);
++              if (kdp != NULL && !kdp->Is_Mounted())
++                  Mount_By_Path(dp->Key_Directory, false);
++              std::vector<std::string> ud; std::vector<bool> da;
++              /* [0126] 等 keystore2/keymint 服务注册完成再解密 metadata:
++                 恢复环境里它们晚于 vold 的首次尝试, 早跑会因 Keystore() 构造失败
++                 导致 /data 挂不上(只能重启恢复). */
++              {
++                  android::vold::fox_wait_for_keystore(10);
++              }
++              if (android::vold::fscrypt_mount_metadata_encrypted(dp->Actual_Block_Device,
++                      dp->Mount_Point, false, false, dp->Current_File_System, false, ud, da, 0,
++                      TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
++                  std::string cb = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
++                  if (!cb.empty()) {
++                      dp->Decrypted_Block_Device = cb;
++                      dp->Is_Encrypted = true;
++                      dp->Is_Decrypted = true;
++                      LOGINFO("Decrypt_Device: metadata decrypted on demand -> %s\n", cb.c_str());
++                  }
++              } else {
++                  LOGINFO("Decrypt_Device: on-demand metadata decrypt failed\n");
++              }
++          }
++      }
++  }
++
+   if (DataManager::GetIntValue(TW_IS_FBE))
+     {
+ #ifdef TW_INCLUDE_FBE
+ 		if (!Mount_By_Path("/data", true)) // /data has to be mounted for FBE
+ 			return -1;
+ 
++		/* [0064] /data 挂载成功后, 按正确顺序准备解密前置:
++		   (a) 同步已安装系统的 keystore 数据库(句柄/spblob 都依赖它)
++		   (b) 打印一次真实布局快照(CE 受保护目录只有 TWRP keyring 可读) */
++		android::keystore::syncKeystoreDb();
++		{
++			DIR *d = opendir("/data");
++			if (d) {
++				struct dirent *e; int n = 0;
++				LOGINFO("Decrypt_Device: /data entries:");
++				while ((e = readdir(d)) != NULL && n < 30) {
++					if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
++					LOGINFO("Decrypt_Device:   %s", e->d_name);
++					n++;
++				}
++				closedir(d);
++			} else {
++				LOGERR("Decrypt_Device: cannot open /data (%s)", strerror(errno));
++			}
++			const char *probe[] = {
++				"/data/misc/keystore", "/data/misc_de/0/keystore", "/data/system/keystore",
++				"/data/system/spblob", "/data/system_de/0/spblob", "/data/unencrypted/key",
++				"/data/system/locksettings.db", NULL };
++			for (int i = 0; probe[i] != NULL; i++) {
++				struct stat st;
++				LOGINFO("Decrypt_Device: probe %s -> %s", probe[i],
++				        stat(probe[i], &st) == 0 ? "EXISTS" : "missing");
++			}
++		}
++
+ 		bool user_need_decrypt = false;
+ 		std::vector<users_struct>::iterator iter;
+ 		for (iter = Users_List.begin(); iter != Users_List.end(); iter++) {
+@@ -2368,6 +2480,47 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+ 		gui_msg(Msg("decrypting_user_fbe=Attempting to decrypt FBE for user {1}...")(user_id));
+ 		if (android::keystore::Decrypt_User(user_id, Password)) {
+ 			gui_msg(Msg("decrypt_user_success_fbe=User {1} Decrypted Successfully")(user_id));
++			/* [0080] CE 解锁成功后必须重建 Internal Storage 映射:
++			   开机阶段的 datamedia 建立发生在 /data 解密之前, 那时 /sdcard 无法建立,
++			   导致解密成功后 TWRP 仍报 "Unable to find partition for path '/sdcard'".
++			   这里在解锁成功后重新建立 /data/media 与相关目录. */
++			{
++				TWPartition* dp2 = Find_Partition_By_Path("/data");
++				if (dp2 != NULL) {
++					dp2->Is_Decrypted = true;
++					dp2->Is_Encrypted = true;
++					DataManager::SetValue(TW_IS_DECRYPTED, 1);
++					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
++					dp2->Setup_Data_Media();
++					dp2->Recreate_Media_Folder();
++					/* [0096] 立即重挂 /data 并建立 /sdcard:
++					   Setup_Data_Media() 末尾会执行 UnMount(true)(partition.cpp:1327/1382),
++					   导致"解密成功后 /data 反而处于未挂载"状态 —— 实测会报
++					       UnMount: Unable to find partition for path '/sdcard'
++					   且后续若以裸分区重挂, /data/media/<u> 的文件名会重新变成密文.
++					   此处重挂会走 Decrypted_Block_Device(dm 设备), 保证解名正确. */
++					if (!dp2->Is_Mounted()) {
++						int mr = 60;
++						while (!dp2->Mount(false) && --mr) usleep(50000);
++					}
++					bool sdcard_ok = PartitionManager.Mount_By_Path("/sdcard", false);
++					LOGINFO("[0080] rebuilt /data/media after CE unlock (data_mounted=%d sdcard=%d)\n",
++					        dp2->Is_Mounted() ? 1 : 0, sdcard_ok ? 1 : 0);
++					/* [0121] 上面的重挂换了 superblock, 内核密钥环随之清空 ⇒ DE 层
++					   文件名会退回密文(实测 /data/misc、/data/system_de/0 均如此).
++					   重挂完成后立刻重新装载 DE 密钥. */
++					{
++						extern bool fscrypt_reinit_de_keys_after_remount();
++						bool rd = fscrypt_reinit_de_keys_after_remount();
++						LOGINFO("[0121] DE keys re-installed after remount: %d\n", (int)rd);
++						/* [0125] CE 密钥同样随挂载实例失效 —— 重挂后必须重装,
++						   否则 /data/media/0、/data/system_ce/0 名字仍是密文. */
++						extern bool fscrypt_reinstall_ce_key();
++						bool rc = fscrypt_reinstall_ce_key();
++						LOGINFO("[0125] CE key re-installed after remount: %d\n", (int)rc);
++					}
++				}
++			}
+ 			Mark_User_Decrypted(user_id);
+ 			if (user_id == 0) {
+ 				// When decrypting user 0 also try all other users
+diff --git a/twrp-functions.cpp b/twrp-functions.cpp
+index 34048232..8240de04 100755
+--- a/twrp-functions.cpp
++++ b/twrp-functions.cpp
+@@ -4348,6 +4348,8 @@ bool TWFunc::Get_Service_From_Manifest(std::string basepath, std::string service
+ 				std::string type = child->name();
+ 				if (type == "hal") {
+ 					xml_node<>* nameNode = child->first_node("name");
++					/* [0017] <hal> 可能没有 <name> 子节点 => 空指针解引用 */
++					if (nameNode == nullptr) continue;
+ 					type = nameNode->value();
+ 					if (type == service) {
+ 						xml_node<> *versionNode = child->first_node("version");
+diff --git a/twrp.cpp b/twrp.cpp
+index ad3ead43..623baa00 100644
+--- a/twrp.cpp
++++ b/twrp.cpp
+@@ -249,7 +249,7 @@ static void process_recovery_mode(twrpAdbBuFifo* adb_bu_fifo, bool skip_decrypti
+ #endif
+ 
+ #ifdef TW_INCLUDE_CRYPTO
+-	android::keystore::copySqliteDb();
++	android::keystore::syncKeystoreDb();
+ #endif
+ 	Decrypt_Page(skip_decryption, datamedia);
+ 
+diff --git a/twrpApex.cpp b/twrpApex.cpp
+index 557283b1..738c0719 100755
+--- a/twrpApex.cpp
++++ b/twrpApex.cpp
+@@ -148,11 +148,20 @@ bool twrpApex::loadApexImage(std::string fileToMount, size_t loop_device_number)
+ 		return false;
+ 	}
+ 
++	/* [0019] 原代码先 close(fd) 再 lseek(fd,...) -> 返回 -1, lo_sizelimit 变成
++	 * 0xFFFFFFFFFFFFFFFF, LOOP_SET_STATUS64 内核返回 EOVERFLOW(75)
++	 * ("Value too large for defined data type"), APEX 全部挂载失败。 */
++	off_t apex_size = lseek(fd, 0, SEEK_END);
++	if (apex_size <= 0) {
++		LOGERR("unable to determine apex size: %s. Reason: %s\n", fileToMount.c_str(), strerror(errno));
++		close(fd);
++		close(loop_fd);
++		return false;
++	}
+ 	close(fd);
+ 
+ 	memset(&info, 0, sizeof(struct loop_info64));
+ 	strlcpy((char*)info.lo_crypt_name, "twrpApex", LO_NAME_SIZE);
+-	off_t apex_size = lseek(fd, 0, SEEK_END);
+ 	info.lo_sizelimit = apex_size;
+ 	if (ioctl(loop_fd, LOOP_SET_STATUS64, &info)) {
+ 		LOGERR("failed to mount loop: %s: %s\n", fileToMount.c_str(), strerror(errno));

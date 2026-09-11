@@ -1,0 +1,35 @@
+# [rec 适配] ST21NFC/ST54L HAL (设备原生) — 拉起 eSE
+# 设备原生 HAL 与 ramdisk(A16) servicemanager 的注册 parcel 不兼容 -> BAD_TYPE -> abort,
+# 故默认使用带 LD_PRELOAD shim 的实例(伪造注册成功; 该 HAL 只导入 registerLazyService)。
+service odm.nfc_hal_service_shim /odm/bin/hw/android.hardware.nfc-service-st
+    class hal
+    user root
+    group root system
+    oneshot
+    disabled
+    setenv LD_LIBRARY_PATH /odm/lib64:/vendor/lib64:/vendor/lib64/hw:/system/lib64
+    setenv LD_PRELOAD /sm17/lib64/libfoxsvcfake.so
+    seclabel u:r:recovery:s0
+
+# 对照/备用: 不带 shim 的原始实例 (需要真注册时用)
+service odm.nfc_hal_service /odm/bin/hw/android.hardware.nfc-service-st
+    class hal
+    user root
+    group root system
+    interface aidl android.hardware.nfc.INfc/default
+    oneshot
+    disabled
+    setenv LD_LIBRARY_PATH /odm/lib64:/vendor/lib64:/vendor/lib64/hw:/system/lib64
+    seclabel u:r:recovery:s0
+
+on property:twrp.nfc=1
+    stop odm.nfc_hal_service
+    start odm.nfc_hal_service_shim
+
+on property:twrp.nfc.plain=1
+    stop odm.nfc_hal_service_shim
+    start odm.nfc_hal_service
+
+on property:twrp.nfc=0
+    stop odm.nfc_hal_service_shim
+    stop odm.nfc_hal_service

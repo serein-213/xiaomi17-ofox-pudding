@@ -1,0 +1,278 @@
+diff --git a/core/Makefile b/core/Makefile
+index a997efa..5e4ccd6 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -1760,6 +1760,39 @@ $(INSTALLED_VENDOR_BOOTIMAGE_TARGET): $(AVBTOOL) $(BOARD_AVB_VENDOR_BOOTIMAGE_KE
+ 	   --salt $$(sha256sum $(BUILD_NUMBER_FILE) $(BUILD_DATETIME_FILE) | cut -d " " -f 1 | tr -d '\n') \
+ 	   --partition_name vendor_boot $(INTERNAL_AVB_VENDOR_BOOT_SIGNING_ARGS) \
+ 	   $(BOARD_AVB_VENDOR_BOOT_ADD_HASH_FOOTER_ARGS)
++
++# Darth9 - vendor_boot
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++  	FOX_MANIFEST_VER="16.0" \
++  	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++  	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++  	COMPRESSION_COMMAND="$(COMPRESSION_COMMAND)" \
++  	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++  	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++  	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++  	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++  	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++  	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++  	vendor_ramdisk="$(INTERNAL_VENDOR_RAMDISK_TARGET)" \
++  	INSTALLED_VENDOR_BOOTIMAGE_TARGET="$(INSTALLED_VENDOR_BOOTIMAGE_TARGET)" \
++  	BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE=$(BOARD_VENDOR_BOOTIMAGE_PARTITION_SIZE) \
++	INTERNAL_VENDOR_BOOTIMAGE_ARGS='"$(INTERNAL_VENDOR_BOOTIMAGE_ARGS)"' \
++  	BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=$(BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT) \
++  	BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT=$(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT) \
++  	ORANGEFOX_CALLING_CARD="1.0" \
++  	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++# Darth9 - vendor_boot
++
+ else
+ $(INSTALLED_VENDOR_BOOTIMAGE_TARGET):
+ 	$(call pretty,"Target vendor_boot image: $@")
+@@ -2804,6 +2837,34 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	$(if $(recovery_root_overlay_paths),for p in $(recovery_root_overlay_paths); do r=$${p#$(TARGET_RECOVERY_ROOT_OUT)/}; if [ -L "$(TARGET_ROOT_OUT)/$$r" ]; then rm -rf "$$p"; fi; done,true)
+ 	rsync -a --exclude=sdcard $(IGNORE_RECOVERY_SEPOLICY) $(IGNORE_CACHE_LINK) $(TARGET_ROOT_OUT) $(TARGET_RECOVERY_OUT)
+ 	# Modifying ramdisk contents...
++
++# Darth9
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_Before_Recovery_Image" \
++  	FOX_MANIFEST_VER="16.0" \
++  	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++  	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++  	COMPRESSION_COMMAND="$(COMPRESSION_COMMAND)" \
++  	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++  	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++  	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++  	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++  	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++  	BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=$(BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT) \
++  	BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT=$(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT) \
++  	ORANGEFOX_CALLING_CARD="2.0" \
++  	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++# Darth9
++
+ 	ln -sf /system/bin/init $(TARGET_RECOVERY_ROOT_OUT)/init
+ 	# Removes $(TARGET_RECOVERY_ROOT_OUT)/init*.rc EXCEPT init.recovery*.rc.
+ 	find $(TARGET_RECOVERY_ROOT_OUT) -maxdepth 1 -name 'init*.rc' -type f -not -name "init.recovery.*.rc" | xargs rm -f
+@@ -2815,7 +2876,7 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	  cp -rf $(recovery_text_file) $(TARGET_RECOVERY_ROOT_OUT)/res/images/ &&) true
+ 	cp -f $(recovery_font) $(TARGET_RECOVERY_ROOT_OUT)/res/images/font.png
+ 	$(foreach item,$(recovery_root_private), \
+-	  cp -rf $(item) $(TARGET_RECOVERY_OUT)/;)
++	  for p in $(if $(recovery_root_overlay_paths),$(sort $(recovery_root_overlay_paths)),__no_overlay__); do rm -rf "$$p"; done; cp -rf $(item) $(TARGET_RECOVERY_OUT)/;)
+ 	$(foreach item,$(TARGET_PRIVATE_RES_DIRS), \
+ 	  cp -rf $(item) $(TARGET_RECOVERY_ROOT_OUT)/$(newline);)
+ 	$(foreach item,$(recovery_fstab), \
+@@ -2823,10 +2884,16 @@ $(INTERNAL_RECOVERY_RAMDISK_FILES_TIMESTAMP): $(MKBOOTFS) \
+ 	$(if $(strip $(recovery_wipe)), \
+ 	  cp -f $(recovery_wipe) $(TARGET_RECOVERY_ROOT_OUT)/system/etc/recovery.wipe)
+ 	ln -sf prop.default $(TARGET_RECOVERY_ROOT_OUT)/default.prop
++	# [ABI修复] 从构建产物树补入源码构建版本的 recovery 运行库/可执行文件 (overlay 仅保留设备专有 blobs)
++	$(if $(wildcard $(TARGET_DEVICE_DIR)/recovery_root_from_source.txt), while read f; do [ -n "$$f" ] || continue; if [ -e "$(PRODUCT_OUT)/$$f" ]; then mkdir -p "$(TARGET_RECOVERY_ROOT_OUT)/$$(dirname $$f)"; cp -fp "$(PRODUCT_OUT)/$$f" "$(TARGET_RECOVERY_ROOT_OUT)/$$f"; fi; done < $(TARGET_DEVICE_DIR)/recovery_root_from_source.txt)
++	# Ensure the built recovery binary lands in the ramdisk (device overlays must not replace it)
++	mkdir -p $(TARGET_RECOVERY_ROOT_OUT)/system/bin && cp -fp $(call intermediates-dir-for,EXECUTABLES,recovery)/recovery $(TARGET_RECOVERY_ROOT_OUT)/system/bin/recovery
++	# [0015] 设备树强制覆盖: 模块安装优先级高于 recovery/root overlay, 这些文件必须最后落盘
++	$(if $(wildcard $(TARGET_DEVICE_DIR)/recovery_root_force), rm -rf $(TARGET_RECOVERY_ROOT_OUT)/sm17; cp -a $(TARGET_DEVICE_DIR)/recovery_root_force/. $(TARGET_RECOVERY_ROOT_OUT)/, true)
+ 	# Silence warnings in first_stage_console.
+ 	touch $(TARGET_RECOVERY_ROOT_OUT)/linkerconfig/ld.config.txt
+-	cd $(TARGET_RECOVERY_ROOT_OUT) && touch ramdisk-files.txt && touch ramdisk-files.sha256sum && find . | sed "s/.\///" | sed "/lib\/modules\//d" > ramdisk-files.txt
+-	cd $(TARGET_RECOVERY_ROOT_OUT) && find -type f | sed "s/.\/ramdisk-files.sha256sum//" | sed "/lib\/modules/d" | sed "/prop.default/d" | sed "/ld\.config\.txt/d" | xargs sha256sum > ramdisk-files.sha256sum
++	cd $(TARGET_RECOVERY_ROOT_OUT) && touch ramdisk-files.txt && touch ramdisk-files.sha256sum && find . | sed "s/.\///" > ramdisk-files.txt
++	cd $(TARGET_RECOVERY_ROOT_OUT) && find -type f | sed "s/.\/ramdisk-files.sha256sum//" | sed "/prop.default/d" | xargs sha256sum > ramdisk-files.sha256sum
+ 	$(BOARD_RECOVERY_IMAGE_PREPARE)
+ 	$(hide) touch $@
+ 
+@@ -2877,6 +2944,32 @@ $(INSTALLED_BOOTIMAGE_TARGET): $(recoveryimage-deps)
+ 	$(call pretty,"Target boot image from recovery: $@")
+ 	$(call build-recoveryimage-target, $@, $(PRODUCT_OUT)/$(subst .img,,$(subst boot,kernel,$(notdir $@))))
+ 
++# Darth9 (recovery-as-boot)
++ifneq ($(NOT_ORANGEFOX),1)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++  	FOX_MANIFEST_VER="16.0" \
++  	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++  	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++  	COMPRESSION_COMMAND="$(COMPRESSION_COMMAND)" \
++  	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++  	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++  	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++  	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++  	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++  	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++  	ORANGEFOX_CALLING_CARD="3.0" \
++  	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++# Darth9
++
+ $(call declare-container-license-metadata,$(INSTALLED_BOOTIMAGE_TARGET),SPDX-license-identifier-GPL-2.0-only SPDX-license-identifier-Apache-2.0,restricted notice,$(BUILD_SYSTEM)/LINUX_KERNEL_COPYING build/soong/licenses/LICENSE,"Boot Image",bool)
+ $(call declare-container-license-deps,$(INSTALLED_BOOTIMAGE_TARGET),$(recoveryimage-deps),$(PRODUCT_OUT)/:/)
+ 
+@@ -2917,6 +3010,34 @@ endif # BUILDING_RECOVERY_IMAGE
+ .PHONY: recoveryimage
+ recoveryimage: $(INSTALLED_RECOVERYIMAGE_TARGET) $(RECOVERY_RESOURCE_ZIP)
+ 
++# Darth9 (recovery as recovery)
++ifneq ($(NOT_ORANGEFOX),1)
++ifneq ($(BOARD_USES_RECOVERY_AS_BOOT),true)
++	$(BASH) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
++  	FOX_MANIFEST_VER="16.0" \
++  	BOARD_BOOT_HEADER_VERSION="$(BOARD_BOOT_HEADER_VERSION)" \
++  	TARGET_ARCH="$(TARGET_ARCH)" \
++	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
++	TARGET_VENDOR_RAMDISK_OUT="$(TARGET_VENDOR_RAMDISK_OUT)" \
++	MKBOOTIMG="$(MKBOOTIMG)" \
++	MKBOOTFS="$(MKBOOTFS)" \
++	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
++	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
++	BOARD_MKBOOTIMG_ARGS='"$(BOARD_MKBOOTIMG_ARGS)"' \
++	TARGET_OUT="$(TARGET_OUT)" \
++  	COMPRESSION_COMMAND="$(COMPRESSION_COMMAND)" \
++  	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
++  	INSTALLED_BOOTIMAGE_TARGET="$(INSTALLED_BOOTIMAGE_TARGET)" \
++  	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
++  	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
++  	BOARD_USES_RECOVERY_AS_BOOT=$(BOARD_USES_RECOVERY_AS_BOOT) \
++  	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
++  	ORANGEFOX_CALLING_CARD="4.0" \
++  	recovery_ramdisk="$(recovery_ramdisk)"
++endif
++endif
++# Darth9
++
+ ifneq ($(BOARD_NAND_PAGE_SIZE),)
+ $(error MTD device is no longer supported and thus BOARD_NAND_PAGE_SIZE is deprecated.)
+ endif
+diff --git a/core/config.mk b/core/config.mk
+index 688ca8c..07290c7 100644
+--- a/core/config.mk
++++ b/core/config.mk
+@@ -423,7 +423,9 @@ $(foreach var,$(_build_broken_bool_vars), \
+   $(if $(filter-out true false,$($(var))), \
+     $(error Valid values of $(var) are "true", "false", and "". Not "$($(var))")))
+ 
+-.KATI_READONLY := $(_build_broken_var_names)
++# Darth9: comment this out (for broken plugins global support)
++#.KATI_READONLY := $(_build_broken_var_names)
++# Darth9
+ 
+ # Returns true if it is a low memory device, otherwise it returns false.
+ define is-low-mem-device
+@@ -767,6 +769,19 @@ EXTRACT_KERNEL := build/make/tools/extract_kernel.py
+ 
+ # Path to tools.jar
+ HOST_JDK_TOOLS_JAR := $(ANDROID_JAVA8_HOME)/lib/tools.jar
++# Darth9
++# OrangeFox post script
++FOX_CURRENT_DEV_STR := $(shell git -C bootable/recovery log -1 --format='%ad (%h)' --date=short)
++ifdef NOT_ORANGEFOX
++  FOX_VENDOR :=
++  BASH :=
++else
++  FOX_VENDOR := vendor/recovery/OrangeFox_A16.sh
++  BASH := bash
++  # broken plugins global support
++  BUILD_BROKEN_PLUGIN_VALIDATION := soong-libaosprecovery_defaults soong-libguitwrp_defaults soong-libminuitwrp_defaults soong-vold_defaults
++endif
++# Darth9
+ 
+ APICHECK_COMMAND := $(JAVA) -Xmx4g -jar $(APICHECK)
+ 
+diff --git a/envsetup.sh b/envsetup.sh
+index 069c02b..636b01b 100644
+--- a/envsetup.sh
++++ b/envsetup.sh
+@@ -318,6 +318,14 @@ function printconfig()
+         return
+     fi
+     _get_build_var_cached report_config
++    
++    # Darth9
++    if [ "$NOT_ORANGEFOX" != "1" ]; then
++    	local DEVICE=$(cut -d'_' -f2 <<<$TARGET_PRODUCT)
++    	mkdir -p /tmp/$DEVICE
++    	export > /tmp/$DEVICE/fox_env.sh
++    fi
++    # Darth9
+ }
+ 
+ function set_stuff_for_environment()
+@@ -1157,7 +1165,47 @@ validate_current_shell
+ set_global_paths
+ source_vendorsetup
+ addcompletions
+-
+ export ANDROID_BUILD_TOP=$(gettop)
+ 
+ . $ANDROID_BUILD_TOP/vendor/twrp/build/envsetup.sh
++
++#
++# Darth9
++# prepare environment variables for importing to OrangeFox_A16.sh
++function orangefox_envsetup() {
++
++    export FOX_MANIFEST_ROOT=$(gettop)
++
++    if [ -z "$NOT_ORANGEFOX" ]; then
++       if [ ! -f $FOX_MANIFEST_ROOT/bootable/recovery/orangefox_defaults.go -a ! -f $FOX_MANIFEST_ROOT/bootable/recovery/orangefox.mk ]; then
++   	  export NOT_ORANGEFOX=1
++       fi
++    fi
++
++    if [ "$NOT_ORANGEFOX" = "1" ]; then
++        echo "- Not OrangeFox! ..."
++        return
++    fi
++
++    unset NOT_ORANGEFOX
++    export ALLOW_MISSING_DEPENDENCIES=true
++    
++    if [ -z "$OUT_DIR" ]; then
++       if [ -n "$OUT" ]; then
++          export OUT_DIR="$OUT"
++       else
++          export OUT_DIR="$FOX_MANIFEST_ROOT/out"
++          export OUT="$OUT_DIR"
++       fi
++    else
++    	if [ -z "$OUT" ]; then
++       	   export OUT="$OUT_DIR"
++    	fi
++    fi
++
++#   [ -s $FOX_MANIFEST_ROOT/frameworks/base/services/core/xsd/vts/Android.bp ] && echo -n "" > $FOX_MANIFEST_ROOT/frameworks/base/services/core/xsd/vts/Android.bp
++}
++
++orangefox_envsetup
++
++# Darth9

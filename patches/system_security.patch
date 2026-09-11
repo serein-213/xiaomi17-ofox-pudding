@@ -1,0 +1,26 @@
+diff --git a/keystore2/keystore2.rc b/keystore2/keystore2.rc
+index e669b18..d1eb1fc 100644
+--- a/keystore2/keystore2.rc
++++ b/keystore2/keystore2.rc
+@@ -6,12 +6,13 @@
+ #
+ # See system/core/init/README.md for information on the init.rc language.
+ 
+-service keystore2 /system/bin/keystore2 /data/misc/keystore
++on late-init
++    start keystore2
++
++service keystore2 /system/bin/keystore2 /tmp/misc/keystore
+     class early_hal
+-    user keystore
+-    group keystore readproc log
+-    task_profiles ProcessCapacityHigh
+-    # The default memlock limit of 65536 bytes is too low for keystore.
+-    rlimit memlock unlimited unlimited
+-    # Reboot to bootloader if Keystore crashes more than 4 times before `sys.boot_completed`.
+-    critical window=0
++    user root
++    # recovery 无 /etc/group; 仅 root
++    group root
++    writepid /dev/cpuset/foreground/tasks
++    seclabel u:r:recovery:s0

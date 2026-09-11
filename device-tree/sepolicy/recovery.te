@@ -1,0 +1,37 @@
+# [0132] recovery 启动阶段的两类批量访问本就会被拒绝:
+#   1) Get_Folder_Size() 遍历 /data 统计备份大小 —— 会进入 app 私有数据、
+#      ART profile、媒体、vold/keystore 等目录;
+#   2) crash_counter==0 时 property_list() 枚举全部系统属性.
+# 每次被拒都写一条 type=1400 audit 日志, 实测单次启动 1759 条;
+# audit 的写入开销是启动页停留过长的主因之一.
+#
+# 这些访问对 recovery 没有实际用途(只用于尺寸估算与排障打印), 因此**保留拒绝、
+# 仅免除审计**: 只加 dontaudit, 不放宽任何 allow ⇒ 安全语义完全不变.
+#
+# 用基类属性而非逐类型枚举: data_file_type 覆盖所有 *_data_file,
+# property_type 覆盖所有属性文件. 这样不会因 recovery 精简策略集里
+# 缺少某个具体类型名而编译失败(实测 checkin_data_file 即属此类).
+
+# 所有 data 文件(含各 app/系统/媒体/vold/keystore/profile 等子类型)
+dontaudit recovery data_file_type:dir { search getattr read open };
+dontaudit recovery data_file_type:file { getattr read open map };
+dontaudit recovery data_file_type:lnk_file { getattr read open };
+dontaudit recovery data_file_type:chr_file { getattr read open };
+
+# 所有系统属性文件
+dontaudit recovery property_type:file { getattr read open map };
+dontaudit recovery property_type:dir { search getattr read open };
+
+# 块/字符设备(dm 设备等)
+dontaudit recovery dm_device:chr_file { getattr read open ioctl };
+dontaudit recovery dm_device:blk_file { getattr read open ioctl };
+
+# provider 侧的资源(/mnt/vendor 等)
+dontaudit recovery mnt_vendor_file:dir { search getattr read open };
+dontaudit recovery mnt_vendor_file:file { getattr read open map };
+
+# 根文件系统与 sysfs(被拒的读取)
+dontaudit recovery rootfs:dir { search getattr read open };
+dontaudit recovery rootfs:file { getattr read open map };
+dontaudit recovery sysfs:dir { search getattr read open };
+dontaudit recovery sysfs:file { getattr read open map };

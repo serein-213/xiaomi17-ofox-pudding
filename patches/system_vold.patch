@@ -1,0 +1,1465 @@
+diff --git a/Decrypt.cpp b/Decrypt.cpp
+index a5a5ab5..293492b 100755
+--- a/Decrypt.cpp
++++ b/Decrypt.cpp
+@@ -87,6 +87,39 @@ extern "C" {
+ #include "KeyStorage.h"
+ #include "Weaver1.h"
+ #include "android/os/IVold.h"
++/* [0068] 在 /data 下有限深度搜索关键文件(keystore 库 / spblob), 输出到 TWRP 日志.
++   目的: A17 把 system_de/<user> 布局改成 /data/system/ 后, 需实测出真实位置. */
++#include <dirent.h>
++#include <sys/stat.h>
++#include <string.h>
++#include <errno.h>
++static void Search_Key_Files(const char *root, int depth, int maxdepth) {
++	if (depth > maxdepth) return;
++	DIR *d = opendir(root);
++	if (!d) return;
++	struct dirent *e;
++	while ((e = readdir(d)) != NULL) {
++		if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
++		std::string full = std::string(root) + "/" + e->d_name;
++		struct stat st;
++		if (lstat(full.c_str(), &st) != 0) continue;
++		if (S_ISDIR(st.st_mode)) {
++			/* 跳过明显巨大的数据目录 */
++			if (!strcmp(e->d_name, "media") || !strcmp(e->d_name, "app") ||
++			    !strcmp(e->d_name, "dalvik-cache") || !strcmp(e->d_name, "app-lib") ||
++			    !strcmp(e->d_name, "apex") || !strcmp(e->d_name, "ota_package")) continue;
++			Search_Key_Files(full.c_str(), depth + 1, maxdepth);
++		} else if (S_ISREG(st.st_mode)) {
++			if (strstr(e->d_name, "persistent.sqlite") || strstr(e->d_name, ".pwd") ||
++			    strstr(e->d_name, ".weaver") || strstr(e->d_name, "spblob") ||
++			    strstr(e->d_name, "locksettings")) {
++				printf("[FIND] %s (%lld bytes)\n", full.c_str(), (long long)st.st_size);
++			}
++		}
++	}
++	closedir(d);
++}
++
+ 
+ namespace apc = ::aidl::android::security::apc;
+ namespace keymint = ::aidl::android::hardware::security::keymint;
+@@ -228,8 +261,32 @@ extern "C" bool lookup_ref_tar(const uint8_t* policy_type, uint8_t* policy) {
+     return true;
+ }
+ 
++/* [0110] 检查 /data 是否已挂载(读 /proc/mounts).
++   真机实测(#111): fscrypt_initialize_systemwide_keys() 跑在 /data 挂载*之前*,
++   而 installKey() 使用 DATA_MNT_POINT="/data" 作为挂载点 ⇒ 挂载点不存在时
++   ioctl 静默失败 ⇒ 内核里*一个 fscrypt key 都没有*(/proc/keys 为空) ⇒
++   /data/system_de/0 等目录的名字永远保持密文. */
++static bool fox_data_is_mounted() {
++	FILE* f = fopen("/proc/mounts", "re");
++	if (f == NULL) return false;
++	char line[4096];
++	bool ok = false;
++	while (fgets(line, sizeof(line), f) != NULL) {
++		if (strstr(line, " /data ") != NULL) { ok = true; break; }
++	}
++	fclose(f);
++	return ok;
++}
++
+ extern "C" bool Decrypt_DE() {
+ 	printf("Attempting to initialize DE keys\n");
++	if (!fox_data_is_mounted()) {
++		printf("[DE] /data NOT mounted -> mounting dm-default-key device first\n");
++		system("mkdir -p /data; mount -t f2fs -o rw /dev/block/mapper/userdata /data 2>/dev/null");
++		printf("[DE] after mount attempt: /data mounted=%d\n", fox_data_is_mounted() ? 1 : 0);
++	} else {
++		printf("[DE] /data already mounted\n");
++	}
+ 	if (!fscrypt_initialize_systemwide_keys()) { // this deals with the overarching device encryption
+ 		printf("fscrypt_initialize_systemwide_keys returned fail\n");
+ 		return false;
+@@ -349,8 +406,27 @@ bool Get_Password_Data(const std::string& spblob_path, const std::string& handle
+ 		return false;
+ 	}
+ 	intptr = (const int*)byteptr;
+-	pwd->handle_len = *intptr;
+-	endianswap(&pwd->handle_len);
++	/* [0076] A17 的 .pwd 布局中 handle_len 是 *8 字节*(int64, BE), 而 A16 及更早是 4 字节.
++	   实测(两个用户样本): 4字节读法得到 0, 8字节读法得到 4/0xffffffff, 且文件总长吻合 8 字节版本.
++	   这里按 8 字节读取(A17), 若得到 0 则回退到 4 字节读法(兼容旧格式). */
++	{
++		unsigned int be32 = 0;
++		memcpy(&be32, byteptr, 4);
++		be32 = __builtin_bswap32(be32);
++		unsigned long long be64 = 0;
++		memcpy(&be64, byteptr, 8);
++		be64 = __builtin_bswap64(be64);
++		printf("[PWD] handle_len candidates: as4=%u as8=%llu (offset=%d)\n",
++		       be32, be64, (int)(byteptr - (const unsigned char*)pwd_data.data()));
++		if (be64 != 0 && be64 < 4096) {
++			pwd->handle_len = (int)be64;
++			byteptr += 8;
++		} else {
++			pwd->handle_len = (int)be32;
++			byteptr += 4;
++		}
++	}
++	intptr = (const int*)byteptr;
+ 	if (pwd->handle_len != 0) {
+ 		pwd->password_handle = malloc(pwd->handle_len);
+ 		if (!pwd->password_handle) {
+@@ -440,6 +516,12 @@ bool Get_Weaver_Data(const std::string& spblob_path, const std::string& handle_s
+ 	return found_file;
+ }
+ 
++/* [0095] spblob 来源标记: 0=真实位置, 1=DE 区副本.
++   由 [0094] 的内容选择设置; get_ce_key_directory_path() 读取它,
++   保证 *CE 密钥与 spblob 同源* —— 否则 SP 与 CE 不匹配仍会解密失败.
++   置于全局命名空间, 供 vold(FsCrypt.cpp) 与 keystore(Decrypt.cpp) 两侧引用. */
++int g_fox_sp_from_copy = 0;   /* file scope */
++
+ namespace android {
+ 
+ namespace keystore {
+@@ -498,11 +580,33 @@ namespace keystore {
+ 	/* keystore2 runs with its database on tmpfs so that nothing done here can
+ 	 * reach the real one. It still has to see the installed system's keys, so
+ 	 * seed it from /data before the first keystore2 call. */
+-	bool syncKeystoreDb() {
++bool syncKeystoreDb() {
+ 		static bool synced = false;
+ 		if (synced) return true;
+ 
+-		const std::string src = "/data/misc/keystore/persistent.sqlite";
++		/* [0062] keystore 数据库多候选(A17 可能移动过位置) */
++		std::string src;
++		{
++			/* [0092] 真实位置优先, DE 区副本回退 */
++			const char* cands[] = {
++				"/data/misc/keystore/persistent.sqlite",
++				"/data/misc_de/0/keystore/persistent.sqlite",
++				"/data/system/keystore/persistent.sqlite",
++				"/data/keystore/persistent.sqlite",
++				"/data/unencrypted/foxsp/keystore/persistent.sqlite",
++				NULL
++			};
++			for (int ci = 0; cands[ci] != NULL; ci++) {
++				struct stat st;
++				if (stat(cands[ci], &st) == 0) { src = cands[ci]; break; }
++			}
++			if (src.empty()) {
++				printf("[SYNC] no keystore db in any known location\n");
++				/* 布局快照由 partitionmanager.cpp 的 Decrypt_Device() 在 /data 挂载后输出 */
++				return false;
++			}
++			fprintf(stderr, "[SYNC] keystore db = '%s'\n", src.c_str());
++		}
+ 		const std::string dst = "/tmp/misc/keystore/persistent.sqlite";
+ 		if (!android::vold::pathExists(src)) {
+ 			printf("no keystore database at '%s'\n", src.c_str());
+@@ -602,8 +706,14 @@ namespace keystore {
+ 				.Authorization(::keymint::TAG_MAC_LENGTH, maclen);
+ 
+ 			ks2::KeyEntryResponse keyEntryResponse;
+-			::ndk::SpAIBinder keystoreBinder(AServiceManager_checkService("android.system.keystore2.IKeystoreService/default"));
++			/* [0016] checkService 非阻塞: keystore2 刚被重启(见上文 tmpfs 同步流程)时可能尚未注册,
++			 * fromBinder 会得到空代理, 下一行解引用即 SIGSEGV (fault addr 0x50)。改为有界轮询 + 判空。 */
++			::ndk::SpAIBinder keystoreBinder(waitForService("android.system.keystore2.IKeystoreService/default"));
+ 			auto keystore = ks2::IKeystoreService::fromBinder(keystoreBinder);
++			if (keystore == nullptr) {
++				printf("keystore2 service unavailable; cannot unwrap synthetic password\n");
++				return disk_decryption_secret_key;
++			}
+ 			auto rc = keystore->getKeyEntry(keyDescriptor(keystore_alias), &keyEntryResponse);
+ 			if (!rc.isOk()) {
+ 				auto error = unwrapError(rc);
+@@ -617,6 +727,11 @@ namespace keystore {
+ 			std::variant<int, ks2::KeyEntryResponse> response = keyEntryResponse;
+ 			auto keyResponse = std::get<ks2::KeyEntryResponse>(response);
+ 			ks2::CreateOperationResponse encOperationResponse;
++			/* [0016] getKeyEntry 可能返回空的 iSecurityLevel */
++			if (keyResponse.iSecurityLevel == nullptr) {
++				printf("getKeyEntry returned no security level\n");
++				return disk_decryption_secret_key;
++			}
+ 			auto begin_rc = keyResponse.iSecurityLevel->createOperation(
+ 				keyResponse.metadata.key, begin_params.vector_data(), true,
+ 				&encOperationResponse);
+@@ -645,6 +760,11 @@ namespace keystore {
+ 			}
+ 			std::optional<std::vector<uint8_t>> optPlaintext;
+ 
++			/* [0016] createOperation 可能返回空的 iOperation */
++			if (encOperationResponse.iOperation == nullptr) {
++				printf("createOperation returned no operation\n");
++				return disk_decryption_secret_key;
++			}
+ 			begin_rc = encOperationResponse.iOperation->finish(cipher_text_hidlvec, {}, &optPlaintext);
+ 			if (!begin_rc.isOk()) {
+ 				printf("finish reponse failed");
+@@ -662,7 +782,13 @@ namespace keystore {
+ 			const unsigned char* intermediate_iv = keystore_result;
+ 			// printf("intermediate_iv: "); output_hex((const unsigned char*)intermediate_iv, 12); printf("\n");
+ 			const unsigned char* intermediate_cipher_text = (const unsigned char*)keystore_result + 12; // The cipher text comes immediately after the IV
+-			int cipher_size = keystore_result_size - 12;
++			if (keystore_result_size < 12 + 16) {
++				printf("Inner synthetic password blob is too short\n");
++				free(keystore_result);
++				return disk_decryption_secret_key;
++			}
++			const int cipher_size = keystore_result_size - 12 - 16;
++			const unsigned char* tag = (const unsigned char*)keystore_result + 12 + cipher_size;
+ 			// First we personalize as seen https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordCrypto.java#102
+ 			void* personalized_application_id = PersonalizedHashBinary(PERSONALISATION_APPLICATION_ID, (const char*)application_id, application_id_size);
+ 			if (!personalized_application_id) {
+@@ -677,19 +803,27 @@ namespace keystore {
+ 			const unsigned char* key = (const unsigned char*)personalized_application_id; // The key is the now personalized copy of the application ID
+ 			// printf("key: "); output_hex((const unsigned char*)key, 32); printf("\n");
+ 			EVP_DecryptInit(d_ctx, EVP_aes_256_gcm(), key, intermediate_iv);
+-			unsigned char* secret_key = (unsigned char*)malloc(cipher_size);
++			unsigned char* secret_key = (unsigned char*)malloc(cipher_size + AES_BLOCK_SIZE);
+ 			if (!secret_key) {
+ 				printf("malloc failure on secret key\n");
+ 				return disk_decryption_secret_key;
+ 			}
+-			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
+-			unsigned char tag[AES_BLOCK_SIZE];
+-			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
+-			EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
++			if (EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text,
++					cipher_size) != 1 ||
++					EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16,
++						const_cast<unsigned char*>(tag)) != 1 ||
++					EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size) != 1) {
++				printf("Failed to authenticate inner synthetic password blob\n");
++				EVP_CIPHER_CTX_free(d_ctx);
++				free(personalized_application_id);
++				free(keystore_result);
++				free(secret_key);
++				return disk_decryption_secret_key;
++			}
+ 			EVP_CIPHER_CTX_free(d_ctx);
+ 			free(personalized_application_id);
+ 			free(keystore_result);
+-			int secret_key_real_size = actual_size - 16;
++			int secret_key_real_size = actual_size + final_size;
+ 			// printf("secret key:  "); output_hex((const unsigned char*)secret_key, secret_key_real_size); printf("\n");
+ 			// The payload data from the keystore update is further personalized at https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
+ 			// We now have the disk decryption key!
+@@ -710,6 +844,8 @@ namespace keystore {
+ //  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#992
+ //  * called here
+ //  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#813 */
++
++
+ bool Get_Secdis(const std::string& spblob_path, const std::string& handle_str, std::string& secdis_data) {
+ 	return Get_Spblob_Data(spblob_path, handle_str, ".secdis", "secdis", &secdis_data);
+ 	// output_hex(secdis_data.data(), secdis_data.size());printf("\n");
+@@ -768,6 +904,10 @@ bool Decrypt_CE_storage(const userid_t user_id, const std::string& secret) {
+ //  * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/LockSettingsService.java#1998 */
+ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password) {
+ 	printf("Attempting to decrypt user's synthetic password\n");
++	Search_Key_Files("/data/misc", 0, 3);
++	Search_Key_Files("/data/system", 0, 2);
++	Search_Key_Files("/data/system_de", 0, 3);
++	Search_Key_Files("/data/vendor", 0, 2);
+ 	bool retval = false;
+ 	void* weaver_key = NULL;
+ 	password_data_struct pwd;
+@@ -780,18 +920,146 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 	std::string secret; // this will be the disk decryption key that is sent to vold
+ 	int token = 0; // there is no token used for this kind of decrypt, key escrow is handled by weaver
+ 	char spblob_path_char[PATH_MAX];
+-	sprintf(spblob_path_char, "/data/system_de/%d/spblob/", user_id);
+-	std::string spblob_path = spblob_path_char;
++	/* [0062] A17 布局适配: A17 把 locksettings.db/spblob 等从 system_de/<user>/ 移到了
++	   /data/system/ 下(实测: /data/system_de/0/locksettings.db 不存在, 而
++	   /data/system/locksettings.db 存在). 先试新位置, 再回退旧位置. */
++	std::string spblob_path;
++	{
++		char cand[PATH_MAX];
++		/* [0070] 优先使用 DE 区副本(/data/unencrypted/foxsp/spblob0):
++		   实测 A17 把 spblob 放在 CE 保护区内(system_de/0/spblob 在 recovery 视角是密文名),
++		   recovery 无法在解锁前读取; 由 Android 侧(root)预先拷贝到 /data/unencrypted
++		   (DE 区)后, recovery 即可读取, 从而完成 CE 解锁. */
++		/* [0094] 暂定真实位置; 最终选择在拿到 handle 之后按*内容*决定
++		   (见下方 "spblob 目录按内容选择"). 这里仅打印候选可用性. */
++		sprintf(cand, "/data/system_de/%d/spblob/", user_id);
++		spblob_path = cand;
++		{
++			const char* probe[] = { "/data/system/spblob/",
++			                        "/data/unencrypted/foxsp/spblob0/", NULL };
++			for (int ci = 0; probe[ci] != NULL; ci++) {
++				struct stat st;
++				printf("[SP] cand %s : %s\n", probe[ci], (stat(probe[ci], &st) == 0) ? "exists" : "MISS");
++			}
++		}
++	}
++	std::string spblob_path_char_dummy = spblob_path;
+ 	long handle = 0;
+ 	// Get the handle: https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/LockSettingsService.java#2017
++	// [0055] 顺序修正: 句柄(handle)是从已安装系统的 keystore 数据库里按别名查出来的,
++	// 因此必须 *先* 同步数据库再取句柄. 原实现先取句柄(getHandle)再 syncKeystoreDb(),
++	// 导致 handle 永远为空 -> Get_Password_Data(handle_len=0) -> spblob 找不到
++	// -> "Unknown password type" -> "Failed to decrypt user". (注释原文亦写明
++	// "keystore2 needs the installed system's database before any of the calls below")
+ 	KeystoreInfo keystore_info;
+-	std::string handle_str = keystore_info.getHandle(user_id);
+-	// The synthetic password key is looked up by alias, so keystore2 needs the
+-	// installed system's database before any of the calls below.
+ 	if (!android::keystore::syncKeystoreDb()) {
+ 		printf("Failed to sync the keystore database\n");
+ 		return Free_Return(retval, weaver_key, &pwd);
+ 	}
++	std::string handle_str = keystore_info.getHandle(user_id);
++	printf("Handle after sync: '%s'\n", handle_str.c_str());
++
++	/* [0098] spblob 目录选择 —— 真实优先 + handle 归一化 + 细分诊断:
++	   1) 真实优先: /data/system_de/<u>/spblob/ > /data/system/spblob/ > foxsp 副本
++	   2) handle 归一化: 依次尝试 %llx / %016llx / 0%llx
++	      (真机实测: 代码算出 79a87cdedff5c7a, 而文件名是 079a87cdedff5c7a)
++	   3) 每个候选打印细分原因: UNREADABLE/MISSING | READABLE 但无匹配(列出实际内容)
++	   4) 全部未命中 -> FATAL(不再猜目录) */
++	{
++		char c_de_buf[PATH_MAX];
++		sprintf(c_de_buf, "/data/system_de/%d/spblob/", (int)user_id);
++		std::string c_de   = c_de_buf;
++		std::string c_sys  = "/data/system/spblob/";
++		std::string c_copy = "/data/unencrypted/foxsp/spblob0/";
++		const std::string cands[3] = { c_de, c_sys, c_copy };
++
++		std::string handles[4];
++		int nhandles = 0;
++		if (!handle_str.empty()) {
++			handles[nhandles++] = handle_str;
++			char hb[64];
++			unsigned long long hv = strtoull(handle_str.c_str(), NULL, 16);
++			sprintf(hb, "%llx", hv);    if (std::string(hb) != handle_str) handles[nhandles++] = hb;
++			sprintf(hb, "%016llx", hv); handles[nhandles++] = hb;
++			sprintf(hb, "0%llx", hv);   handles[nhandles++] = hb;
++		}
++		printf("[SP] handle raw='%s' forms:", handle_str.c_str());
++		for (int hi = 0; hi < nhandles; hi++) printf(" '%s'", handles[hi].c_str());
++		printf("\n");
++
++		std::string chosen;
++		bool hit = false;
++		for (int i = 0; i < 3; i++) {
++			struct stat st;
++			errno = 0;
++			if (stat(cands[i].c_str(), &st) != 0) {
++				int e1 = errno;
++				printf("[SP] cand%d %s : UNREADABLE/MISSING errno=%d (%s)\n", i, cands[i].c_str(), e1, strerror(e1));
++				/* [0099] 同时列出其*父目录*内容, 直接揭示 A17 的真实布局 */
++				char par[PATH_MAX];
++				snprintf(par, sizeof(par), "%s", cands[i].c_str());
++				size_t L = strlen(par);
++				if (L > 1 && par[L-1] == '/') par[L-1] = 0;
++				char* sl = strrchr(par, '/');
++				if (sl != NULL) { *sl = 0;
++					printf("[SP]   parent %s ->\n", par);
++					DIR* pd = opendir(par);
++					if (pd == NULL) { errno = 0; printf("[SP]     (unreadable errno=%d)\n", errno); }
++					else { struct dirent* pe; int pn = 0;
++						while ((pe = readdir(pd)) != NULL && pn < 30) { if (pe->d_name[0]=='.') continue; printf("[SP]     %s\n", pe->d_name); pn++; }
++						closedir(pd);
++					}
++				}
++				continue;
++			}
++			bool found_here = false;
++			for (int hi = 0; hi < nhandles; hi++) {
++				std::string probe = cands[i] + handles[hi] + ".pwd";
++				if (stat(probe.c_str(), &st) == 0) {
++					printf("[SP] cand%d %s : HIT '%s.pwd' -> SELECTED\n", i, cands[i].c_str(), handles[hi].c_str());
++					chosen = cands[i]; hit = true; found_here = true; break;
++				}
++			}
++			if (found_here) break;
++			printf("[SP] cand%d %s : READABLE but no matching <handle>.pwd; actual entries:\n", i, cands[i].c_str());
++			DIR* dd = opendir(cands[i].c_str());
++			if (dd == NULL) {
++				printf("[SP]     (opendir failed)\n");
++			} else {
++				struct dirent* e; int n = 0;
++				while ((e = readdir(dd)) != NULL && n < 20) {
++					if (e->d_name[0] == '.') continue;
++					printf("[SP]     %s\n", e->d_name); n++;
++				}
++				closedir(dd);
++			}
++		}
++		if (chosen.empty()) {
++			printf("[SP] FATAL: no candidate has any handle form; chosen dir=(none)\n");
++			/* 额外: 列出各真实候选的*父目录*, 便于定位 A17 的实际布局 */
++			const char* parents[2] = { NULL, NULL };
++			char p0[PATH_MAX]; sprintf(p0, "/data/system_de/%d/", (int)user_id);
++			parents[0] = p0; parents[1] = "/data/system/";
++			for (int pi = 0; pi < 2; pi++) {
++				printf("[SP]   parent %s ->\n", parents[pi]);
++				DIR* dd = opendir(parents[pi]);
++				if (dd == NULL) { printf("[SP]     (unreadable)\n"); continue; }
++				struct dirent* e; int n = 0;
++				while ((e = readdir(dd)) != NULL && n < 30) {
++					if (e->d_name[0] == '.') continue;
++					printf("[SP]     %s\n", e->d_name); n++;
++				}
++				closedir(dd);
++			}
++			printf("[SP] chosen dir=(none) handle=%s hit=no\n", handle_str.c_str());
++			return Free_Return(retval, weaver_key, &pwd);
++		}
++		spblob_path = chosen;
++		::g_fox_sp_from_copy = (chosen == c_copy) ? 1 : 0;
++		printf("[SP] chosen dir=%s handle=%s hit=%s src=%s\n",
++		       chosen.c_str(), handle_str.c_str(), hit ? "yes" : "no",
++		       ::g_fox_sp_from_copy ? "COPY" : "REAL");
++	}
+ 	// Now we begin driving unwrapPasswordBasedSyntheticPassword from: https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#758
+ 	// First we read the password data which contains scrypt parameters
+ 	// printf("pwd N %i R %i P %i salt ", pwd.scryptN, pwd.scryptR, pwd.scryptP); output_hex((char*)pwd.salt, pwd.salt_len); printf("\n");
+@@ -810,6 +1078,11 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 		}
+ 	} else {
+ 		std::string defpassword = "default-password";
++		// Android pads an empty-credential LSKF to STRETCHED_LSKF_LENGTH with
++		// zeroes. Leaving the tail uninitialized still produces the correct
++		// 16-byte Weaver key on this device, but corrupts the 32-byte token used
++		// to derive the synthetic-password application ID.
++		memset(password_token, 0, sizeof(password_token));
+ 		memcpy(password_token, defpassword.data(), defpassword.length());
+ 	}
+ 	// output_hex(&password_token[0], PASSWORD_TOKEN_SIZE);printf("\n");
+@@ -991,11 +1264,13 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
+ 					AIBinder* authzAIBinder = AServiceManager_waitForService("android.security.authorization");
+ 					::ndk::SpAIBinder binder(authzAIBinder);
+ 					auto service = aidl::android::security::authorization::IKeystoreAuthorization::fromBinder(binder);
+-					if (service == NULL) {
++					if (service == nullptr) {
+ 						printf("error: could not connect to keystore service\n");
+ 						ALOGE("error: could not connect to keystore service\n");
++					} else {
++						/* [0016] 原代码在空服务时仍然解引用 */
++						service->addAuthToken(authToken);
+ 					}
+-					auto binder_result = service->addAuthToken(authToken);
+ 				}
+ 			}
+ 
+@@ -1084,10 +1359,25 @@ extern "C" bool Decrypt_User(const userid_t user_id, const std::string& Password
+ 	}
+     std::string filename;
+     bool Default_Password = (Password == "!");
+-    if (Get_Password_Type(user_id, filename) == 0 && !Default_Password) {
+-		printf("Unknown password type\n");
+-		return false;
+-	}
++    /* [0073] A17 根因修复:
++       Get_Password_Type() 通过 /data/system/gatekeeper.{password,pattern}.key 判断锁类型,
++       但这两个文件在 A17 上位于 *CE* 保护区, recovery 在解锁前读不到 ->
++       返回 0 -> "Unknown password type" -> 直接失败(实测现象).
++       但同目录下 spblob 存在即说明用的是"合成密码"机制, 此时不应因 gatekeeper 不可读而放弃. */
++    {
++        struct stat spst;
++        bool have_spblob = (stat("/data/system_de/0/spblob", &spst) == 0) ||
++                           (stat("/data/unencrypted/foxsp/spblob0", &spst) == 0) ||
++                           (stat("/data/system/spblob", &spst) == 0);
++        int ptype = Get_Password_Type(user_id, filename);
++        if (ptype == 0 && !Default_Password) {
++            if (!have_spblob) {
++                printf("Unknown password type\n");
++                return false;
++            }
++            printf("gatekeeper key files unavailable (CE-protected); spblob present -> using synthetic password\n");
++        }
++    }
+ 
+ 	if (Default_Password) {
+ 		if (!Decrypt_CE_storage(user_id, "!")) {
+@@ -1095,9 +1385,17 @@ extern "C" bool Decrypt_User(const userid_t user_id, const std::string& Password
+ 		}
+ 		return true;
+ 	}
+-	if (stat("/data/system_de/0/spblob", &st) == 0) {
+-		printf("Using synthetic password method\n");
+-		return Decrypt_User_Synth_Pass(user_id, Password);
++	/* [0075] spblob 判据也要接受 DE 区副本(A 方案) —— 否则会掉进 HIDL gatekeeper
++	   分支并因 gatekeeper HIDL 服务不存在而失败(实测: Failed to decrypt user 0). */
++	{
++		struct stat spst;
++		bool have_spblob = (stat("/data/system_de/0/spblob", &spst) == 0) ||
++		                   (stat("/data/unencrypted/foxsp/spblob0", &spst) == 0) ||
++		                   (stat("/data/system/spblob", &spst) == 0);
++		if (have_spblob) {
++			printf("Using synthetic password method\n");
++			return Decrypt_User_Synth_Pass(user_id, Password);
++		}
+ 	}
+ 	// printf("password filename is '%s'\n", filename.c_str());
+ 	if (stat(filename.c_str(), &st) != 0) {
+diff --git a/FsCrypt.cpp b/FsCrypt.cpp
+index 54dd91c..3e5dd72 100644
+--- a/FsCrypt.cpp
++++ b/FsCrypt.cpp
+@@ -135,8 +135,98 @@ static std::string get_de_key_path(userid_t user_id) {
+     return StringPrintf("%s/de/%d", user_key_dir.c_str(), user_id);
+ }
+ 
++/* [0099] 探测一个 CE 密钥目录是否*真的可用*: 不仅 opendir 成功,
++   还要求能 stat/读取其中的密钥材料. 每次失败都打印 errno —— 真机 v10 曾出现
++   "source=REAL" 之后又 "real ce dir unreadable" 的自相矛盾, 仅靠 opendir 无法定因. */
++static bool fox_probe_ce_dir(const std::string& dir, const char* tag) {
++    errno = 0;
++    DIR* dp = opendir(dir.c_str());
++    if (dp == NULL) {
++        printf("[CE] probe %s %s -> opendir FAILED errno=%d (%s)\n", tag, dir.c_str(), errno, strerror(errno));
++        return false;
++    }
++    struct dirent* e; int n = 0; char first[256] = {0};
++    while ((e = readdir(dp)) != NULL) {
++        if (e->d_name[0] == '.') continue;
++        if (n == 0) snprintf(first, sizeof(first), "%s", e->d_name);
++        n++;
++    }
++    closedir(dp);
++    printf("[CE] probe %s %s -> opendir ok, %d entries%s%s\n", tag, dir.c_str(), n,
++           n ? ", first=" : "", n ? first : "");
++    if (n == 0) { printf("[CE]   %s is EMPTY -> not usable\n", dir.c_str()); return false; }
++    /* 尝试实际读取密钥文件(路径可能是 <dir>/current/encrypted_key 或 <dir>/<entry>/) */
++    const char* suffix[2] = { "/current/encrypted_key", "/current" };
++    for (int i = 0; i < 2; i++) {
++        std::string f = dir + suffix[i];
++        struct stat st;
++        errno = 0;
++        if (stat(f.c_str(), &st) != 0) {
++            printf("[CE]   stat %s FAILED errno=%d (%s)\n", f.c_str(), errno, strerror(errno));
++            continue;
++        }
++        if (!S_ISREG(st.st_mode)) {
++            printf("[CE]   %s is dir (mode=0%o) - listing skipped here\n", f.c_str(), st.st_mode & 07777);
++            /* 目录型: 直接列出它 */
++            DIR* d2 = opendir(f.c_str());
++            if (d2) { struct dirent* e2; int n2 = 0;
++                while ((e2 = readdir(d2)) != NULL && n2 < 10) { if (e2->d_name[0]=='.') continue; printf("[CE]     %s\n", e2->d_name); n2++; }
++                closedir(d2);
++            }
++            return true;
++        }
++        errno = 0;
++        int fd = open(f.c_str(), O_RDONLY);
++        if (fd < 0) { printf("[CE]   open %s FAILED errno=%d (%s)\n", f.c_str(), errno, strerror(errno)); continue; }
++        errno = 0;
++        char b[8]; ssize_t r = read(fd, b, sizeof(b));
++        int rerr = errno;
++        close(fd);
++        if (r < 0) { printf("[CE]   read %s FAILED errno=%d (%s)\n", f.c_str(), rerr, strerror(rerr)); continue; }
++        printf("[CE]   read %s -> %zd bytes OK (%zu bytes total)\n", f.c_str(), r, (size_t)st.st_size);
++        return true;
++    }
++    printf("[CE]   %s : opendir ok but no readable key material -> not usable\n", dir.c_str());
++    return false;
++}
++
++/* [0100] 选择并*固定*CE 密钥目录:
++   真机 v11 实测: 首次 probe 时 /data/misc/vold/user_keys/ce/0 可读且能读到
++   current/encrypted_key (291 字节), auth 也通过; 但随后同一路径变为
++   ENOENT(errno=2) —— 挂载状态被后续步骤改变 —— 二次 probe 失败后代码回退副本,
++   于是装入内核的是*副本*的 CE key ⇒ 能解密(块层 key 对)但文件名永远密文.
++   对策: 首次探测成功后立刻把整个目录*快照*到 /tmp, 之后所有读取都走快照,
++   绝不再探原路径. */
++static std::string g_ce_key_dir_cache;
++static userid_t  g_ce_key_dir_user = (userid_t)-1;
++
+ static std::string get_ce_key_directory_path(userid_t user_id) {
+-    return StringPrintf("%s/ce/%d", user_key_dir.c_str(), user_id);
++    if (g_ce_key_dir_user == user_id && !g_ce_key_dir_cache.empty()) {
++        printf("[CE] ce_key dir (cached) = %s\n", g_ce_key_dir_cache.c_str());
++        return g_ce_key_dir_cache;
++    }
++    std::string real = StringPrintf("%s/ce/%d", user_key_dir.c_str(), user_id);
++    std::string alt  = StringPrintf("/data/unencrypted/foxsp/user_keys_ce/%d", user_id);
++    std::string chosen;
++    const char* tag = "NONE";
++    if (fox_probe_ce_dir(real, "REAL"))     { chosen = real; tag = "REAL"; }
++    else if (fox_probe_ce_dir(alt, "COPY")) { chosen = alt;  tag = "COPY"; }
++    else                                    { chosen = real; }
++
++    /* 快照到 /tmp —— 后续只用快照 */
++    std::string snap = StringPrintf("/tmp/foxce/%d", (int)user_id);
++    std::string cmd  = StringPrintf("rm -rf %s; mkdir -p %s; cp -a %s/. %s/ 2>/dev/null",
++                                    snap.c_str(), snap.c_str(), chosen.c_str(), snap.c_str());
++    int rc = system(cmd.c_str());
++    printf("[CE] snapshot cmd rc=%d : %s -> %s\n", rc, chosen.c_str(), snap.c_str());
++    if (fox_probe_ce_dir(snap, "SNAPSHOT")) {
++        g_ce_key_dir_cache = snap; g_ce_key_dir_user = user_id;
++        printf("[CE] ce_key source=%s (snapshot in use) = %s\n", tag, snap.c_str());
++        return snap;
++    }
++    printf("[CE] ce_key source=%s (snapshot unusable, using original) = %s\n", tag, chosen.c_str());
++    g_ce_key_dir_cache = chosen; g_ce_key_dir_user = user_id;
++    return chosen;
+ }
+ 
+ // Returns the keys newest first
+@@ -212,18 +302,93 @@ static bool fixate_user_ce_key(const std::string& directory_path, const std::str
+ // Unlike AOSP this does not fixate the key it found: dropping the sibling
+ // bindings is a Keystore deletion we cannot undo if the user was midway
+ // through a credential change.
++/* [0100] 供日志用的不可逆散列(不打印 key 本身) */
++static uint64_t fox_key_hash64(const KeyBuffer& k) {
++    uint64_t h = (uint64_t)1469598103934665603ULL;
++    for (size_t i = 0; i < k.size(); i++) {
++        h ^= (uint64_t)(unsigned char)k[i];
++        h *= (uint64_t)1099511628211ULL;
++    }
++    return h;
++}
++
++/* [0104] CE key 读取 —— 自动判别"软件包装"与"keystore/keymint 包装":
++   KeyStorage 创建密钥时, 走 keystore 路径会额外写出 keymaster_key_blob
++   (KeyStorage.cpp:570). 该文件存在 ⇒ 这条 CE key 是 KeyMint 包装的,
++   必须用 kEmptyAuthentication(⇒ usesKeystore()==true ⇒ decryptWithKeystoreKey
++   ⇒ KeyMint unwrapKey) 才能得到裸 key; 用凭据走软件 GCM 只会得到
++   263 字节的非裸材料(真机 v13 实测), 装进内核后文件名永远解不开. */
++
++/* [0104]/[0106] CE 密钥候选路径 —— 按 A17 实测布局排序:
++   真机实测(2026-09-11): A17 把密钥放在 fstab 的 keydirectory 指向处:
++       /metadata/vold/metadata_encryption/key/       {encrypted_key, keymaster_key_blob, secdiscardable, version}
++       /metadata/vold/metadata_encryption/key_back/  (同构备份)
++   而 /data/misc/vold/user_keys/ce/<u>/current/ 只是副本(内容 md5 与备份相同),
++   其 encrypted_key 用软件路径解出 263 字节(非裸 key) ⇒ 不能用.
++   判据仍为 keymaster_key_blob 是否存在(存在 ⇒ KeyMint 包装 ⇒ 走 keystore 路径). */
++static void fox_add_candidate(std::vector<std::string>& v, const std::string& p) {
++    for (const auto& e : v) if (e == p) return;
++    v.push_back(p);
++}
++
+ static bool read_user_ce_key(userid_t user_id, const android::vold::KeyAuthentication& auth,
+                              KeyBuffer* ce_key) {
+-    auto const directory_path = get_ce_key_directory_path(user_id);
+-    auto const paths = get_ce_key_paths(directory_path);
+-    for (auto const ce_key_path : paths) {
+-        LOG(INFO) << "Trying user CE key " << ce_key_path;
+-        if (retrieveKey(ce_key_path, auth, ce_key)) {
+-            LOG(INFO) << "Successfully retrieved key";
++    std::vector<std::string> cands;
++
++    /* [0109] ★ 不使用 fstab 的 keydirectory 作为 CE/DE 密钥来源!
++       真机证据(v16 实测): 用 /metadata/vold/metadata_encryption/key 装出的
++       descriptor = 5fe1b1e8d45618d403ac5c4580ce0e5f,
++       而 /data/media/0 与 /data/system_ce/0 的策略是 71d784fc11caa0bd ⇒ 不匹配 ⇒ 名字永远密文.
++       该目录是 **metadata(dm-default-key) 密钥**(由 MetadataCrypt::read_key 使用),
++       与用户的 CE/DE 密钥无关. CE/DE 密钥的真实位置是
++       /data/misc/vold/user_keys/{ce,de}/<user>/<current|cx*> (AOSP KeyStorage 布局),
++       下面由快照路径提供. */
++
++    /* (2) 传统位置(经快照) —— 保留为回退 */
++    auto const legacy_dir = get_ce_key_directory_path(user_id);
++    for (auto const& p : get_ce_key_paths(legacy_dir)) fox_add_candidate(cands, p);
++    printf("[CE] key candidates (%zu):\n", cands.size());
++    for (size_t i = 0; i < cands.size(); i++) printf("[CE]   [%zu] %s\n", i, cands[i].c_str());
++
++    for (auto const& ce_key_path : cands) {
++        struct stat st;
++        std::string blob_path = ce_key_path + "/keymaster_key_blob";
++        bool ks_wrapped = (stat(blob_path.c_str(), &st) == 0);
++        bool have_key = (stat((ce_key_path + "/encrypted_key").c_str(), &st) == 0);
++        printf("[CE] try %s : encrypted_key=%s keymaster_key_blob=%s\n", ce_key_path.c_str(),
++               have_key ? "yes" : "NO", ks_wrapped ? "YES(=>keystore path)" : "no(=>software path)");
++        if (!have_key) continue;
++
++        const android::vold::KeyAuthentication* order[2];
++        if (ks_wrapped) { order[0] = &kEmptyAuthentication; order[1] = &auth; }
++        else            { order[0] = &auth;                order[1] = &kEmptyAuthentication; }
++
++        for (int oi = 0; oi < 2; oi++) {
++            KeyBuffer k;
++            errno = 0;
++            if (!retrieveKey(ce_key_path, *order[oi], &k)) {
++                printf("[CE]   auth%d(%s) FAILED errno=%d (%s)\n", oi,
++                       (order[oi] == &kEmptyAuthentication) ? "kEmpty/keystore" : "credential",
++                       errno, strerror(errno));
++                continue;
++            }
++            printf("[CE]   auth%d(%s) -> key size=%zu hash64=%016llx\n", oi,
++                   (order[oi] == &kEmptyAuthentication) ? "kEmpty/keystore" : "credential",
++                   k.size(), (unsigned long long)fox_key_hash64(k));
++            /* [0108] 接受任何大小: 本机 fstab 带 wrappedkey_v0, Android 内核里的 key 是
++               108 字节的 fscrypt-p(硬件包装体); retrieveKey 返回的 KeyMint blob(263B)
++               正是 install_storage_key→exportWrappedStorageKey 所需的输入.
++               原先"必须 32/64"的门禁会把*正确*的材料判为非法 ⇒ 已移除. */
++            *ce_key = k;
++            printf("[CE]   ✔ 采用 %s (size=%zu; hw_wrapped 时由 exportWrappedStorageKey 处理)\n",
++                   ce_key_path.c_str(), k.size());
++            LOG(INFO) << "Successfully retrieved key from " << ce_key_path;
+             return true;
+         }
+     }
+     LOG(ERROR) << "Failed to find working ce key for user " << user_id;
++    printf("[CE] read_user_ce_key FAILED user=%d (tried %zu candidates)\n",
++           (int)user_id, cands.size());
+     return false;
+ }
+ 
+@@ -323,6 +488,12 @@ static bool init_data_file_encryption_options() {
+                    << entry->encryption_options;
+         return false;
+     }
++    {
++        std::string _os;
++        android::fscrypt::OptionsToString(s_data_options, &_os);
++        printf("[POL] data_options: %s (version=%d hw_wrapped=%d flags=0x%x)\n", _os.c_str(),
++               s_data_options.version, s_data_options.use_hw_wrapped_key, s_data_options.flags);
++    }
+     if ((s_data_options.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) &&
+         !DoesHardwareSupportOnly32DunBits(entry->blk_device)) {
+         // This would unnecessarily reduce security and not be compliant with the CDD.
+@@ -330,13 +501,71 @@ static bool init_data_file_encryption_options() {
+                       "32-bit DUNs.  Remove this flag from the device's fstab";
+         return false;
+     }
+-    if (s_data_options.version == 1 || !retry) {
+-        s_data_options.use_hw_wrapped_key =
+-            GetEntryForMountPoint(&fstab_default, DATA_MNT_POINT)->fs_mgr_flags.wrapped_key;
+-    }
++    /* [0112] A17 语义移植: 删除此处用 fs_mgr 标志覆盖 use_hw_wrapped_key 的旧逻辑.
++       A17(libfscrypt ParseOptions) 把 key_type/包装方式完全由 fileencryption= 串里的
++       +wrappedkey_v0 / +wrappedkey 决定; 用 fs_mgr 的独立 `wrappedkey` 再去覆盖,
++       会把 ParseOptions 从 `wrappedkey_v0` 正确推导出的 TRUE 冲掉(A16 的既有 bug).
++       我们的 fstab: fileencryption=…+inlinecrypt_optimized+wrappedkey_v0 ⇒ 现在恒为 TRUE ✓ */
++    (void)retry;
+     return true;
+ }
+ 
++
++/* [0101] 正确读取目录的 fscrypt 策略(支持 v2).
++   旧实现用 FS_IOC_GET_ENCRYPTION_POLICY(v1 结构) 查 v2 策略必然 EINVAL,
++   导致"所有目录都报 no policy"的假象 —— 该结论作废. */
++static int fox_get_policy(const char* dir, uint8_t desc_out[8], uint8_t* ver_out,
++                          uint8_t* cmode_out, uint8_t* fmode_out, uint32_t* flags_out) {
++    int fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++    if (fd < 0) return -errno;
++    struct fscrypt_get_policy_ex_arg arg;
++    memset(&arg, 0, sizeof(arg));
++    arg.policy_size = sizeof(arg.policy);
++    if (ioctl(fd, FS_IOC_GET_ENCRYPTION_POLICY_EX, &arg) != 0) {
++        int e = errno;
++        close(fd);
++        return -e;
++    }
++    close(fd);
++    if (desc_out) memset(desc_out, 0, 8);
++    if (arg.policy.version == FSCRYPT_POLICY_V2) {
++        auto& p2 = arg.policy.v2;
++        if (ver_out)   *ver_out = 2;
++        if (cmode_out) *cmode_out = p2.contents_encryption_mode;
++        if (fmode_out) *fmode_out = p2.filenames_encryption_mode;
++        if (flags_out) *flags_out = p2.flags;
++        if (desc_out)  memcpy(desc_out, p2.master_key_identifier, 8);
++    } else if (arg.policy.version == FSCRYPT_POLICY_V1) {
++        auto& p1 = arg.policy.v1;
++        if (ver_out)   *ver_out = 1;
++        if (cmode_out) *cmode_out = p1.contents_encryption_mode;
++        if (fmode_out) *fmode_out = 0;
++        if (flags_out) *flags_out = p1.flags;
++        if (desc_out)  memcpy(desc_out, p1.master_key_descriptor, 8);   /* v1 字段名不同 */
++    } else {
++        return -EINVAL;
++    }
++    return 0;
++}
++
++static void fox_print_policy(const char* tag, const char* dir) {
++    uint8_t d[8], v = 0, cm = 0, fm = 0; uint32_t fl = 0;
++    int r = fox_get_policy(dir, d, &v, &cm, &fm, &fl);
++    if (r != 0) {
++        printf("[POL] %s %s -> ioctl errno=%d (%s)\n", tag, dir, -r, strerror(-r));
++        return;
++    }
++    printf("[POL] %s %s -> v%u desc=%02x%02x%02x%02x%02x%02x%02x%02x contents=%u filenames=%u flags=0x%x\n",
++           tag, dir, v, d[0],d[1],d[2],d[3],d[4],d[5],d[6],d[7], cm, fm, fl);
++}
++
++/* [0125] 解锁流程会在安装 CE 密钥**之后**卸载+重挂 /data(Setup_Data_Media),
++   而内核 fscrypt 密钥绑在挂载实例(superblock)上 —— 重挂一次全部失效.
++   [0121] 已为 DE 密钥做了重装, 但 CE 密钥没有, 于是 /data/media/0 与
++   /data/system_ce/0 的文件名永远退回密文. 这里保存解出的 CE 密钥供重挂后重装. */
++static KeyBuffer s_recovery_ce_key;
++static bool s_recovery_ce_key_valid = false;
++
+ static bool install_storage_key(const std::string& mountpoint, const EncryptionOptions& options,
+                                 const KeyBuffer& key, EncryptionPolicy* policy) {
+     if (options.version == 0) {
+@@ -344,14 +573,58 @@ static bool install_storage_key(const std::string& mountpoint, const EncryptionO
+         return false;
+     }
+     KeyBuffer ephemeral_wrapped_key;
+-    if (options.use_hw_wrapped_key) {
++    /* [0122] 运行时实验开关: A17 的 CE 密钥目录只有 encrypted_key+version
++       (无 secdiscardable、无 keymaster_key_blob), 说明其 263 字节明文很可能
++       就是应当*原样*安装的密钥材料, 而不是需要再 exportKey() 包装一次的东西.
++       用属性 twrp.foxce.raw 在解锁瞬间切换, 无需重新编译即可对比两种形态:
++           setprop twrp.foxce.raw 1   -> 原始形态安装 (hw_wrapped=0)
++           setprop twrp.foxce.raw 0   -> 原行为 (exportKey 包装后安装) */
++    bool use_wrapped = options.use_hw_wrapped_key;
++    if (use_wrapped && android::base::GetBoolProperty("twrp.foxce.raw", false)) {
++        printf("[KEY] [0122] twrp.foxce.raw=1 -> 以原始形态安装 key (size=%zu)\n", key.size());
++        use_wrapped = false;
++    }
++    if (use_wrapped) {
+         if (!exportWrappedStorageKey(key, &ephemeral_wrapped_key)) {
+             LOG(ERROR) << "Failed to get ephemeral wrapped key";
+             return false;
+         }
+     }
+-    return installKey(mountpoint, options, options.use_hw_wrapped_key ? ephemeral_wrapped_key : key,
+-                      policy);
++    if (use_wrapped == options.use_hw_wrapped_key) {
++        return installKey(mountpoint, options, use_wrapped ? ephemeral_wrapped_key : key, policy);
++    }
++    /* 需要以原始形态安装时, 复制一份 options 并把 hw_wrapped 关掉:
++       installKey 内部用 options.use_hw_wrapped_key 决定 __flags 与 raw_size. */
++    EncryptionOptions raw_options = options;
++    raw_options.use_hw_wrapped_key = false;
++    return installKey(mountpoint, raw_options, key, policy);
++}
++
++/* [0120] 把 metadata(metadata_encryption) 密钥以 fscrypt 形式安装到 /data.
++   真机实测: /data/misc 的策略 desc=04f072bc6ed03821 —— 正是 metadata 密钥
++   (/metadata/vold/metadata_encryption/key) 的描述符.
++   该密钥此前只被用于建立 dm-default-key 设备, 从未作为 fscrypt 键安装,
++   于是 /data/misc 下的文件名永远是密文 ⇒ /data/misc/vold/user_keys/ce/0
++   (Android 17 真实的 CE 密钥位置) 不可见 ⇒ CE 密钥只能退回到陈旧副本 ⇒
++   /data/media/0 的名字永不解密. 装上它即可让整条链闭合. */
++bool fscrypt_install_metadata_fscrypt_key(const KeyBuffer& key) {
++    /* metadata 挂载发生在 fscrypt_initialize_systemwide_keys() 之前,
++       此时 s_data_options 还没初始化 —— 就地初始化, 而不是放弃安装.
++       (否则 /data/misc 名字永远密文, 真实 CE 密钥目录不可见.) */
++    if (s_data_options.version == 0) {
++        printf("[MD] s_data_options 未初始化 -> 就地初始化\n");
++        if (!init_data_file_encryption_options()) {
++            printf("[MD] init_data_file_encryption_options 失败\n");
++            return false;
++        }
++        printf("[MD] 初始化完成: version=%d hw_wrapped=%d\n",
++               s_data_options.version, (int)s_data_options.use_hw_wrapped_key);
++    }
++    EncryptionPolicy policy;
++    bool ok = install_storage_key(DATA_MNT_POINT, s_data_options, key, &policy);
++    printf("[MD] metadata key -> fscrypt on /data: %s (hw_wrapped=%d key_size=%zu)\n",
++           ok ? "OK" : "FAILED", (int)s_data_options.use_hw_wrapped_key, key.size());
++    return ok;
+ }
+ 
+ // Retrieve the options to use for encryption policies on adoptable storage.
+@@ -495,6 +768,7 @@ static bool is_numeric(const char* name) {
+ }
+ 
+ static bool load_all_de_keys() {
++    printf("[DE] load_all_de_keys START\n");
+     auto de_dir = user_key_dir + "/de";
+     auto dirp = std::unique_ptr<DIR, int (*)(DIR*)>(opendir(de_dir.c_str()), closedir);
+     if (!dirp) {
+@@ -520,6 +794,7 @@ static bool load_all_de_keys() {
+         auto key_path = de_dir + "/" + entry->d_name;
+         KeyBuffer de_key;
+         LOG(INFO) << "fscrypt::load_all_de_keys::retrieveKey";
++        printf("[DE] retrieving DE key (load_all_de_keys)\n");
+         if (!retrieveKey(key_path, kEmptyAuthentication, &de_key)) {
+             // This is probably a partially removed user, so ignore
+             if (user_id != 0) continue;
+@@ -543,6 +818,7 @@ static bool load_all_de_keys() {
+ 
+ bool fscrypt_initialize_systemwide_keys() {
+     LOG(INFO) << "fscrypt_initialize_systemwide_keys";
++    printf("[DE] fscrypt_initialize_systemwide_keys START\n");
+ 
+     if (!init_data_file_encryption_options()) return false;
+ 
+@@ -561,15 +837,30 @@ install:
+     // fscrypt_init_user0() can access it later.
+     if (!install_storage_key(DATA_MNT_POINT, s_data_options, device_key, &s_device_policy)) {
+         if (retry) {
+-            printf("Trying %s wrappedkey\n", options.use_hw_wrapped_key ? "without" : "with");
++            /* [0112] 原实现切换的是局部副本 options, 而 install_storage_key 用的是
++               s_data_options ⇒ 重试时参数未变 ⇒ 必然以同样方式再失败. 改为切换真正生效的变量. */
++            printf("[DE] retry: toggling wrappedkey mode (s_data_options.hw=%d -> %d)\n",
++                   (int)s_data_options.use_hw_wrapped_key, (int)!s_data_options.use_hw_wrapped_key);
++            s_data_options.use_hw_wrapped_key = !s_data_options.use_hw_wrapped_key;
+             GetEntryForMountPoint(&fstab_default, DATA_MNT_POINT)->fs_mgr_flags.wrapped_key =
+-                options.use_hw_wrapped_key = !options.use_hw_wrapped_key;
++                s_data_options.use_hw_wrapped_key;
+             retry = false;
+             goto install;
+         }
+         return false;
+     }
+ 
++    /* [0113] 打印*设备密钥*(DE_sys) 安装后的描述符 —— 这是 /data/system_de/0 真正需要的.
++       真机基准(Android 可用时): /data/system_de/0 的策略 desc=0a1d1454047afe13.
++       此前一直没打印过这个值, 导致无法判断设备密钥是否装对. */
++    {
++        printf("[DE] device_key(DE_sys) key_raw_ref = ");
++        for (size_t i = 0; i < s_device_policy.key_raw_ref.size(); i++)
++            printf("%02x", (unsigned char)s_device_policy.key_raw_ref[i]);
++        printf("  (期望 0a1d1454047afe13)\n");
++        fox_print_policy("[DE]", "/data/system_de/0");
++        fox_print_policy("[DE]", "/data");
++    }
+     // AOSP writes /data/unencrypted/{mode,ref,per_boot_ref} here for init to
+     // pick up on the next boot. The installed system owns those files and
+     // rewrites them itself, so recovery only keeps the policy in memory.
+@@ -639,6 +930,19 @@ static bool prepare_special_dirs() {
+     return true;
+ }
+ 
++
++/* [0082] 读取并打印目录的 fscrypt 策略(用于对比 DE 生效目录与未生效目录) */
++#include <linux/fscrypt.h>
++#ifndef FS_IOC_GET_ENCRYPTION_POLICY
++#define FS_IOC_GET_ENCRYPTION_POLICY _IOW('f', 21, struct fscrypt_policy)
++#endif
++/* [0101] 旧实现用 v1 ioctl 查 v2 策略必然 EINVAL, 会输出
++   "no policy / ioctl failed (Invalid argument)" 的*误导*结果.
++   现直接委托给 fox_print_policy(_EX ioctl, 支持 v2). */
++static void DumpEncryptionPolicy(const char* dir) {
++    fox_print_policy("[POL]", dir);
++}
++
+ bool fscrypt_init_user0_done;
+ 
+ bool fscrypt_init_user0() {
+@@ -673,12 +977,21 @@ bool fscrypt_init_user0() {
+     // only prepare DE storage here, since user 0's CE key won't be installed
+     // yet unless it was just created.  The framework will prepare the user's CE
+     // storage later, once their CE key is installed.
++    printf("[DE] about to prepare user0 DE storage\n");
+     if (!fscrypt_prepare_user_storage("", 0, android::os::IVold::STORAGE_FLAG_DE)) {
+         LOG(ERROR) << "Failed to prepare user 0 storage";
++        printf("[DE] FAILED: fscrypt_prepare_user_storage(user0, FLAG_DE)\n");
+         return false;
+     }
++    printf("[DE] user0 DE storage prepared OK\n");
+ 
+     fscrypt_init_user0_done = true;
++    printf("[POL] ==== DE-dir policy comparison ====\n");
++    DumpEncryptionPolicy("/data/media/0");
++    DumpEncryptionPolicy("/data/system_de/0");
++    DumpEncryptionPolicy("/data/misc/vold/user_keys/de/0");
++    DumpEncryptionPolicy("/data/misc/vold/user_keys/ce/0");
++    DumpEncryptionPolicy("/data/misc");
+     return true;
+ }
+ 
+@@ -917,20 +1230,70 @@ std::vector<int> fscrypt_get_unlocked_users() {
+ // fscrypt_prepare_user_storage() has to be called for each adoptable storage volume anyway (since
+ // the volume might have been absent when the user was created), and that handles the unlocking.
+ bool fscrypt_unlock_ce_storage(userid_t user_id, const std::string& secret_hex) {
+-    LOG(DEBUG) << "fscrypt_unlock_ce_storage " << user_id;
+-    if (!IsFbeEnabled()) return true;
++    /* [0102] 当前实测中*唯一失败*的一步, 因此逐步打印 + 关键描述符对比. */
++    printf("[CE] ===== unlock_ce_storage user=%d secret_hex_len=%zu =====\n",
++           (int)user_id, secret_hex.size());
++    if (!IsFbeEnabled()) { printf("[CE] not FBE -> ok\n"); return true; }
+     if (s_ce_policies.count(user_id) != 0) {
+-        LOG(WARNING) << "CE storage for user " << user_id << " is already unlocked";
++        printf("[CE] CE already unlocked (policy cached) -> ok\n");
+         return true;
+     }
++    /* [0105] 时序保护: 真机实测 keystore2/weaver 在首启时可能仍在 restarting,
++       此时 unwrap 必然失败. 有界等待(最多 30s)后再继续. */
++    {
++        const char* svcs[3] = { "keystore2", "vendor.keymint", "odm.weaver_hal_service" };
++        for (int si = 0; si < 3; si++) {
++            std::string prop = std::string("init.svc.") + svcs[si];
++            for (int w = 0; w < 60; w++) {
++                std::string st = android::base::GetProperty(prop, "?");
++                if (st == "running") break;
++                if (w == 0) printf("[CE] waiting for %s (state=%s)\n", svcs[si], st.c_str());
++                usleep(500000);
++            }
++            printf("[CE] %s state=%s\n", svcs[si],
++                   android::base::GetProperty(prop, "?").c_str());
++        }
++    }
+     auto auth = authentication_from_hex(secret_hex);
+-    if (!auth) return false;
++    if (!auth) { printf("[CE] (1) authentication_from_hex FAILED\n"); return false; }
++    printf("[CE] (1) auth ok, usesKeystore=%d\n", (int)auth->usesKeystore());
++
+     KeyBuffer ce_key;
+-    if (!read_user_ce_key(user_id, *auth, &ce_key)) return false;
++    errno = 0;
++    if (!read_user_ce_key(user_id, *auth, &ce_key)) {
++        printf("[CE] (2) read_user_ce_key FAILED errno=%d (%s)\n", errno, strerror(errno));
++        return false;
++    }
++    printf("[CE] (2) ce_key size=%zu (期望 32/64; 明显更大=解包异常) hash64=%016llx\n",
++           ce_key.size(), (unsigned long long)fox_key_hash64(ce_key));
++
+     EncryptionPolicy ce_policy;
+-    if (!install_storage_key(DATA_MNT_POINT, s_data_options, ce_key, &ce_policy)) return false;
++    errno = 0;
++    bool inst_ok = install_storage_key(DATA_MNT_POINT, s_data_options, ce_key, &ce_policy);
++    if (inst_ok) {
++        /* [0125] 保存密钥字节, 供 /data 重挂后重装(内核密钥随挂载实例失效). */
++        s_recovery_ce_key = ce_key;
++        s_recovery_ce_key_valid = true;
++        printf("[0125] CE key saved for post-remount reinstall (user=%d size=%zu)\n",
++               (int)user_id, ce_key.size());
++    }
++    int inst_errno = errno;
++    printf("[CE] (3) install_storage_key %s errno=%d (%s)\n",
++           inst_ok ? "ok" : "FAILED", inst_errno, strerror(inst_errno));
++    if (!inst_ok) return false;
++
++    /* ★ [0103] 决定性对比: 装入内核的 key 描述符 vs 目标目录策略的描述符 */
++    printf("[CE] (4) installed key_raw_ref = ");
++    for (size_t i = 0; i < ce_policy.key_raw_ref.size(); i++)
++        printf("%02x", (unsigned char)ce_policy.key_raw_ref[i]);
++    printf("\n");
++    fox_print_policy("[CE] (4)", "/data/media/0");
++    fox_print_policy("[CE] (4)", "/data/system_ce/0");
++    fox_print_policy("[CE] (4)", "/data/misc/vold/user_keys/ce/0");
++
+     s_ce_policies[user_id].internal = ce_policy;
+     LOG(INFO) << "Installed CE key for user " << user_id;
++    printf("[CE] (5) unlock_ce_storage DONE (policy cached)\n");
+     return true;
+ }
+ 
+@@ -987,9 +1350,40 @@ bool fscrypt_prepare_user_storage(const std::string& volume_uuid, userid_t user_
+         auto user_de_path = android::vold::BuildDataUserDePath(volume_uuid, user_id);
+ 
+         if (IsFbeEnabled()) {
++            // [0084] A17 兼容: 若 DE 策略不可用, 尝试切换 wrapped-key 模式后重建
++            if (s_de_policies.find(user_id) == s_de_policies.end()) {
++                LOG(WARNING) << "DE policy missing for user " << user_id << ", retrying with toggled wrappedkey mode";
++                printf("[DE] missing DE policy, toggling wrappedkey mode and reloading\n");
++                if (!load_all_de_keys()) {
++                    LOG(ERROR) << "Cannot find DE policy for user " << user_id;
++                    printf("[DE] FATAL: reload failed, no DE policy for user %d\n", user_id);
++                    return false;
++                }
++            }
++            // [0085] 关键: 验证 system_de 目录的文件名是否可解密(检测策略是否真正生效)
++            {
++                const char* sd = "/data/system_de/0";
++                DIR* d = opendir(sd);
++                bool names_ok = false;
++                if (d) {
++                    struct dirent* e;
++                    while ((e = readdir(d))) {
++                        if (IsDotOrDotDot(*e)) continue;
++                        // 合法的明文条目名为可打印 ASCII; 加密的会是 base64-ish 长串
++                        if (strcmp(e->d_name, "spblob") == 0 || strlen(e->d_name) < 32) { names_ok = true; break; }
++                    }
++                    closedir(d);
++                }
++                printf("[DE] system_de/0 name check: %s\n", names_ok ? "PLAINTEXT-OK" : "ENCRYPTED-BAD");
++                if (!names_ok) {
++                    LOG(ERROR) << "system_de/0 filenames still encrypted; DE policy not effective";
++                }
++            }
+             auto it = s_de_policies.find(user_id);
+             if (it == s_de_policies.end()) {
+                 LOG(ERROR) << "Cannot find DE policy for user " << user_id;
++                printf("[DE] FATAL: no DE policy for user %d (have: %zu entries)\n",
++                       user_id, s_de_policies.size());
+                 return false;
+             }
+             UserPolicies& user_de_policies = it->second;
+@@ -1008,8 +1402,14 @@ bool fscrypt_prepare_user_storage(const std::string& volume_uuid, userid_t user_
+             if (!prepare_dir(system_legacy_path, 0700, AID_SYSTEM, AID_SYSTEM)) return false;
+             if (!prepare_dir(profiles_de_path, 0771, AID_SYSTEM, AID_SYSTEM)) return false;
+ 
+-            if (!prepare_dir_with_policy(system_de_path, 0770, AID_SYSTEM, AID_SYSTEM, de_policy))
++            if (!prepare_dir_with_policy(system_de_path, 0770, AID_SYSTEM, AID_SYSTEM, de_policy)) {
++                LOG(ERROR) << "Failed to prepare system_de_path: " << system_de_path;
++                printf("[DE] FATAL: cannot prepare %s with DE policy\n", system_de_path.c_str());
++                DumpEncryptionPolicy(system_de_path.c_str());
+                 return false;
++            }
++            printf("[DE] OK: %s prepared with DE policy\n", system_de_path.c_str());
++            DumpEncryptionPolicy(system_de_path.c_str());
+             if (!prepare_dir_with_policy(vendor_de_path, 0771, AID_ROOT, AID_ROOT, de_policy))
+                 return false;
+         }
+@@ -1202,3 +1602,36 @@ bool lookup_key_ref(const std::map<userid_t, UserPolicies>& policy_map, userid_t
+     *raw_ref = refi->second.internal.key_raw_ref;
+     return true;
+ }
++
++
++/* [0121] /data 被卸载+重挂后(Setup_Data_Media / CE 解锁流程), 内核为旧 superblock
++   安装的 fscrypt 密钥全部失效 ⇒ DE 层文件名回退为密文(实测 /data/misc、
++   /data/system_de/0 解锁后都变回密文, 而刚开机时是明文). 重挂完成后重新装载
++   设备密钥与各用户 DE 密钥, 使 DE 层在任何时刻都保持可读. */
++bool fscrypt_reinit_de_keys_after_remount() {
++    printf("[DE] [0121] re-installing DE keys after /data remount\n");
++    bool ok1 = fscrypt_initialize_systemwide_keys();
++    bool ok2 = ok1 && load_all_de_keys();
++    printf("[DE] [0121] reinit result: systemwide=%d de_keys=%d\n", (int)ok1, (int)ok2);
++    return ok1 && ok2;
++}
++
++
++/* [0125] /data 被重挂后重新安装 CE 密钥(与 [0121] 的 DE 重装配套).
++   没有这一步, /data/media/0、/data/system_ce/0 的文件名在解锁后依然是密文. */
++bool fscrypt_reinstall_ce_key() {
++    if (!s_recovery_ce_key_valid) {
++        printf("[0125] no saved CE key, skip reinstall\n");
++        return false;
++    }
++    if (s_data_options.version == 0) {
++        printf("[0125] s_data_options 未初始化, 先初始化\n");
++        if (!init_data_file_encryption_options()) return false;
++    }
++    EncryptionPolicy policy;
++    bool ok = install_storage_key(DATA_MNT_POINT, s_data_options, s_recovery_ce_key, &policy);
++    printf("[0125] reinstall CE key after remount: %s (size=%zu)\n",
++           ok ? "OK" : "FAILED", s_recovery_ce_key.size());
++    if (ok) { printf("[0125] new key_raw_ref = "); for (size_t i = 0; i < policy.key_raw_ref.size(); i++) printf("%02x", (unsigned char)policy.key_raw_ref[i]); printf("\n"); }
++    return ok;
++}
+diff --git a/KeyStorage.cpp b/KeyStorage.cpp
+index be66f88..1317d88 100644
+--- a/KeyStorage.cpp
++++ b/KeyStorage.cpp
+@@ -16,6 +16,10 @@
+ 
+ #include "KeyStorage.h"
+ 
++#include <chrono>
++#include <binder/IServiceManager.h>
++#include <binder/IBinder.h>
++
+ #include "Checkpoint.h"
+ #include "Keystore.h"
+ #include "Utils.h"
+@@ -25,6 +29,7 @@
+ #include <mutex>
+ #include <vector>
+ 
++#include <stdint.h>
+ #include <errno.h>
+ #include <stdio.h>
+ #include <sys/stat.h>
+@@ -603,33 +608,75 @@ bool storeKeyAtomically(const std::string& key_path, const std::string& tmp_path
+     return true;
+ }
+ 
++/* [0107] 供诊断用的不可逆散列(不打印敏感原文) */
++static uint64_t fox_h64(const std::string& s) {
++    uint64_t h = (uint64_t)1469598103934665603ULL;
++    for (size_t i = 0; i < s.size(); i++) { h ^= (uint64_t)(unsigned char)s[i]; h *= (uint64_t)1099511628211ULL; }
++    return h;
++}
++static void fox_dump32(const KeyBuffer& k) {
++    for (int i = 0; i < 32 && i < (int)k.size(); i++) printf("%02x", (unsigned char)k[i]);
++}
++
+ bool retrieveKey(const std::string& dir, const KeyAuthentication& auth, KeyBuffer* key) {
+     LOG(INFO) << "Retrieving key from keymaster";
+     std::string version;
+-    if (!readFileToString(dir + "/" + kFn_version, &version)) return false;
++    if (!readFileToString(dir + "/" + kFn_version, &version)) {
++        printf("[CE] step: read version FAILED (%s/version)\n", dir.c_str());
++        return false;
++    }
+     if (version != kCurrentVersion) {
+         LOG(ERROR) << "Version mismatch, expected " << kCurrentVersion << " got " << version;
++        printf("[CE] step: version mismatch got='%s' expected='%s'\n", version.c_str(), kCurrentVersion);
+         return false;
+     }
+     std::string secdiscardable_hash;
+-    if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) return false;
++    if (!readSecdiscardable(dir + "/" + kFn_secdiscardable, &secdiscardable_hash)) {
++        printf("[CE] step: readSecdiscardable FAILED\n");
++        return false;
++    }
+     std::string appId = generateAppId(auth, secdiscardable_hash);
++    printf("[CE] step: version='%s' secdisc_hash_len=%zu secdisc_hash64=%016llx auth_secret_len=%zu usesKeystore=%d appId_len=%zu\n",
++           version.c_str(), secdiscardable_hash.size(),
++           (unsigned long long)fox_h64(secdiscardable_hash), auth.secret.size(),
++           (int)auth.usesKeystore(), appId.size());
++    /* [0124] 打印 appId 全文(仅 32/64 字节的散列, 不含密钥原文), 用于在 keystore
++       数据库(keyentry.alias)中定位该密钥的 KeyMint 条目 —— 从而判定 A17 的 CE
++       密钥是否本来就该走 keystore 路径. */
++    {
++        printf("[0124] dir=%s appId(%zu)=", dir.c_str(), appId.size());
++        for (size_t i = 0; i < appId.size(); i++) printf("%02x", (unsigned char)appId[i]);
++        printf("\n");
++        struct stat kst;
++        printf("[0124]   keymaster_key_blob exists=%d  secdiscardable exists=%d\n",
++               (stat((dir + "/keymaster_key_blob").c_str(), &kst) == 0),
++               (stat((dir + "/secdiscardable").c_str(), &kst) == 0));
++    }
+     std::string encryptedMessage;
+-    if (!readFileToString(dir + "/" + kFn_encrypted_key, &encryptedMessage)) return false;
++    if (!readFileToString(dir + "/" + kFn_encrypted_key, &encryptedMessage)) {
++        printf("[CE] step: read encrypted_key FAILED\n");
++        return false;
++    }
++    printf("[CE] step: encrypted_key len=%zu\n", encryptedMessage.size());
+     if (auth.usesKeystore()) {
+         Keystore keystore;
+-        if (!keystore) return false;
++        if (!keystore) { printf("[CE] step: Keystore() ctor FAILED (keystore2 不可用)\n"); return false; }
+         km::AuthorizationSet keyParams = beginParams(appId);
+         if (!decryptWithKeystoreKey(keystore, dir, keyParams, encryptedMessage, key)) {
+             LOG(ERROR) << "decryptWithKeystoreKey failed";
++            printf("[CE] step: decryptWithKeystoreKey FAILED\n");
+             return false;
+         }
++        printf("[CE] step: unwrap-keystore -> size=%zu first32=", key->size()); fox_dump32(*key); printf("\n");
+     } else {
+         if (!decryptWithoutKeystore(appId, encryptedMessage, key)) {
+             LOG(ERROR) << "decryptWithoutKeystore failed";
++            printf("[CE] step: decryptWithoutKeystore FAILED\n");
+             return false;
+         }
++        printf("[CE] step: unwrap-software -> size=%zu first32=", key->size()); fox_dump32(*key); printf("\n");
+     }
++    printf("[CE] step: %s\n", (key->size() == 32 || key->size() == 64) ? "裸 key ✓" : "非 32/64 字节 ⇒ 仍是包装体");
+     return true;
+ }
+ 
+@@ -708,5 +755,49 @@ bool setKeyStorageBindingSeed(const std::vector<uint8_t>& seed) {
+     return false;
+ }
+ 
++/* [0126] recovery 启动阶段, keystore2 / keymint binder 服务的注册**晚于**
++   vold 的 metadata 解密尝试 ⇒ Keystore() 构造失败 ⇒ metadata 密钥取不到
++   ⇒ /data 挂载失败(只能重启一次才恢复).
++
++   探测方式: **直接构造 Keystore** —— 这正是后续真正会失败的那一步,
++   比按服务名 checkService() 更可靠(recovery 的 binder 上下文里服务名
++   可能看不到, 实测按名字探测会误报 "NOT ready" 而实际可用). */
++bool fox_wait_for_keystore(int timeout_sec) {
++    using namespace android;
++    if (timeout_sec <= 0) timeout_sec = 10;
++
++    /* 服务名必须与 Keystore.cpp:30-31 的常量一致(AIDL 完整名).
++       之前写的 "android.system.keystore2" 是错的 ⇒ 廉价预判永远失败. */
++    static const char* const kKeystoreService =
++            "android.system.keystore2.IKeystoreService/default";
++
++    /* 关键: 不能直接构造 Keystore 来探测 —— 它的构造函数内部有
++       waitForService() 的 300 x 100ms = **30 秒**有界轮询(Keystore.cpp:110-119),
++       服务没起来时每次迭代都会阻塞 30 秒, 循环几次就把启动拖成几十分钟.
++       所以先用 checkService() 做**廉价**预判, 只有服务确实存在才构造. */
++    auto start = std::chrono::steady_clock::now();
++    const auto limit = std::chrono::seconds(timeout_sec);
++    int waited_ms = 0;
++    for (;;) {
++        bool present = false;
++        sp<IServiceManager> sm = defaultServiceManager();
++        if (sm != nullptr)
++            present = (sm->checkService(String16(kKeystoreService)) != nullptr);
++        if (present) {
++            Keystore probe;          /* 服务已在, 构造会立刻返回 */
++            if (probe) {
++                if (waited_ms > 0)
++                    printf("[0126] keystore ready after %d ms\n", waited_ms);
++                return true;
++            }
++        }
++        if (std::chrono::steady_clock::now() - start >= limit) break;
++        usleep(200000);
++        waited_ms += 200;
++    }
++    printf("[0126] keystore NOT ready after %d s (继续, 由调用方决定)\n", timeout_sec);
++    return false;
++}
++
+ }  // namespace vold
+ }  // namespace android
+diff --git a/KeyUtil.cpp b/KeyUtil.cpp
+index 7cad609..cc35137 100644
+--- a/KeyUtil.cpp
++++ b/KeyUtil.cpp
+@@ -172,20 +172,60 @@ bool installKey(const std::string& mountpoint, const EncryptionOptions& options,
+     }
+ 
+     if (options.use_hw_wrapped_key) arg->__flags |= __FSCRYPT_ADD_KEY_FLAG_HW_WRAPPED;
++
++    /* [0123] 把最终安装的密钥字节导出到 /tmp(临时内存盘, 重启即消失),
++       用于在主机上做逐字节比对, 判定 CE 与 DE 的解包产物是否同一对象. */
++    {
++        char dpath[128];
++        const char* base = strrchr(mountpoint.c_str(), '/');
++        base = base ? base + 1 : mountpoint.c_str();
++        snprintf(dpath, sizeof(dpath), "/tmp/foxinstall-%s-%d-%zu.bin",
++                 base, (int)options.use_hw_wrapped_key, key.size());
++        FILE* fp = fopen(dpath, "wb");
++        if (fp) {
++            if (!key.empty()) fwrite(key.data(), 1, key.size(), fp);
++            fclose(fp);
++            printf("[KEY] [0123] dumped key -> %s (%zu bytes, hw_wrapped=%d)\n",
++                   dpath, key.size(), (int)options.use_hw_wrapped_key);
++        }
++        if (!key.empty()) {
++            printf("[KEY] [0123] key hash64=");
++            uint64_t h = 1469598103934665603ULL;
++            for (size_t i = 0; i < key.size(); i++) {
++                h ^= (uint64_t)(unsigned char)key[i]; h *= 1099511628211ULL;
++            }
++            printf("%016llx  first32=", (unsigned long long)h);
++            for (size_t i = 0; i < 32 && i < key.size(); i++) printf("%02x", (unsigned char)key[i]);
++            printf("\n");
++        }
++    }
+     // Provide the raw key.
+     arg->raw_size = key.size();
+     memcpy(arg->raw, key.data(), key.size());
+ 
++    /* [0111] recovery 里 logd 不运行 ⇒ LOG/PLOG 写不进 /tmp/recovery.log,
++       关键失败一直不可见. 这里补 printf(stdout/stderr 会被 TWRP 记录). */
++    printf("[KEY] installKey: open %s (ver=%d hw_wrapped=%d raw_size=%zu key_size=%zu)\n",
++           mountpoint.c_str(), options.version, (int)options.use_hw_wrapped_key,
++           (size_t)arg->raw_size, key.size());
+     android::base::unique_fd fd(open(mountpoint.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+     if (fd == -1) {
++        printf("[KEY] open %s FAILED errno=%d (%s)\n", mountpoint.c_str(), errno, strerror(errno));
+         PLOG(ERROR) << "Failed to open " << mountpoint << " to install key";
+         return false;
+     }
+ 
+-    if (ioctl(fd, FS_IOC_ADD_ENCRYPTION_KEY, arg) != 0) {
++    errno = 0;
++    int rc = ioctl(fd, FS_IOC_ADD_ENCRYPTION_KEY, arg);
++    int ierr = errno;
++    if (rc != 0) {
++        printf("[KEY] FS_IOC_ADD_ENCRYPTION_KEY FAILED errno=%d (%s) hw_wrapped=%d raw_size=%zu\n",
++               ierr, strerror(ierr), (int)options.use_hw_wrapped_key, (size_t)arg->raw_size);
+         PLOG(ERROR) << "Failed to install fscrypt key to " << mountpoint;
+         return false;
+     }
++    printf("[KEY] FS_IOC_ADD_ENCRYPTION_KEY ok (hw_wrapped=%d raw_size=%zu)\n",
++           (int)options.use_hw_wrapped_key, (size_t)arg->raw_size);
+ 
+     if (arg->key_spec.type == FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER) {
+         // Retrieve the key identifier that the kernel computed.
+diff --git a/KeystoreInfo.cpp b/KeystoreInfo.cpp
+index 04a6811..1402c1e 100755
+--- a/KeystoreInfo.cpp
++++ b/KeystoreInfo.cpp
+@@ -27,6 +27,7 @@
+ #include <algorithm>
+ #include <string>
+ #include <sqlite3.h>
++#include <sys/stat.h>
+ #include "KeystoreInfo.hpp"
+ 
+ std::string KeystoreInfo::uint2hex(int64_t num) {
+@@ -50,15 +51,42 @@ std::string KeystoreInfo::getHandle(const userid_t user_id) {
+ 	sqlite3_stmt *stmt;
+ 	char *err_msg = 0;
+ 
+-	rc = sqlite3_open("/data/system/locksettings.db", &db);
+-	if (rc) {
+-		fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
++	/* [0056] sp-handle 存储位置回退:
++	   原实现只读 /data/system/locksettings.db —— 但 /data/system 是 **CE** 保护目录,
++	   在用户凭据解锁之前必然打不开(返回空句柄 -> Get_Password_Data handle_len=0
++	   -> "Unknown password type" -> Failed to decrypt user).
++	   按 AOSP 布局依次尝试 DE 侧路径, 并打印实际命中的路径以便定位. */
++	/* [0093] 真实位置优先, DE 区副本回退 */
++	const char *db_paths[] = {
++		"/data/system_de/0/locksettings.db",
++		"/data/system/locksettings.db",
++		"/data/misc_de/0/locksettings.db",
++		"/data/unencrypted/foxsp/locksettings.db",
++		NULL
++	};
++	const char *opened_path = NULL;
++	for (int i = 0; db_paths[i] != NULL; i++) {
++		struct stat st;
++		if (stat(db_paths[i], &st) != 0) {
++			fprintf(stderr, "[KeystoreInfo] not found: %s\n", db_paths[i]);
++			continue;
++		}
++		rc = sqlite3_open(db_paths[i], &db);
++		if (rc == 0) { opened_path = db_paths[i]; break; }
++		fprintf(stderr, "[KeystoreInfo] open failed %s: %s\n", db_paths[i], sqlite3_errmsg(db));
+ 		sqlite3_close(db);
++	}
++	if (opened_path == NULL) {
++		fprintf(stderr, "[KeystoreInfo] no locksettings.db found in any known location\n");
+ 		return "";
+ 	}
++	fprintf(stderr, "[KeystoreInfo] using %s\n", opened_path);
++	rc = 0;
+ 	std::string sql = "SELECT * FROM locksettings WHERE name = 'sp-handle' AND user = " + std::to_string(user_id);
++	fprintf(stderr, "[KeystoreInfo] query: %s\n", sql.c_str());
+ 	rc = sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, NULL);
+ 	if (rc != SQLITE_OK) {
++		fprintf(stderr, "[KeystoreInfo] prepare failed: %s\n", sqlite3_errmsg(db));
+ 		sqlite3_close(db);
+ 		return "";
+ 	}
+@@ -74,6 +102,8 @@ std::string KeystoreInfo::getHandle(const userid_t user_id) {
+ 	}
+ 	sqlite3_finalize(stmt);
+ 	sqlite3_close(db);
++	fprintf(stderr, "[KeystoreInfo] sp-handle for user %d: raw=%lld -> '%s'\n",
++	        (int)user_id, (long long)value, uint2hex(value).c_str());
+ 	return uint2hex(value);
+ }
+ 
+diff --git a/MetadataCrypt.cpp b/MetadataCrypt.cpp
+index bc2e7ea..5662b99 100644
+--- a/MetadataCrypt.cpp
++++ b/MetadataCrypt.cpp
+@@ -45,6 +45,8 @@
+ #include "fs/Ext4.h"
+ #include "fs/F2fs.h"
+ 
++extern bool fscrypt_install_metadata_fscrypt_key(const ::android::vold::KeyBuffer& key);
++
+ namespace android {
+ namespace vold {
+ 
+@@ -286,6 +288,13 @@ bool fscrypt_mount_metadata_encrypted(const std::string& blk_device, const std::
+                                       const std::string& fs_type, bool is_zoned,
+                                       const std::vector<std::string>& user_devices,
+                                       const std::vector<bool>& device_aliased, int64_t length, std::string fstab_path) {
++    /* [0126] 先等 keystore2 就绪, 否则 read_key() 里的 Keystore 构造会失败,
++       导致 metadata 解密整体失败、/data 挂不上(只能重启恢复). */
++    {
++        extern bool fox_wait_for_keystore(int timeout_sec);
++        printf("[0126] waiting for keystore2 before metadata decrypt (%s)\n", mount_point.c_str());
++        fox_wait_for_keystore(10);
++    }
+     LOG(INFO) << "fscrypt_mount_metadata_encrypted: " << mount_point
+                << " encrypt: " << needs_encrypt << " format: " << should_format << " with "
+                << fs_type << " block device: " << blk_device << " with zoned " << is_zoned
+@@ -366,6 +375,14 @@ bool fscrypt_mount_metadata_encrypted(const std::string& blk_device, const std::
+         return false;
+     }
+ 
++    /* [0120] 让 /data/misc(策略 desc=04f072bc, 即本 metadata 密钥)的文件名
++       也能解密 —— 否则 /data/misc/vold/user_keys/ce/0 不可见, CE 密钥只能取副本. */
++    /* 该函数定义在 FsCrypt.cpp 的全局作用域(不在 namespace android::vold 内). */
++    printf("[MD] about to install metadata key as fscrypt key on /data\n");
++    if (!::fscrypt_install_metadata_fscrypt_key(key)) {
++        printf("[MD] WARN: metadata fscrypt key install failed (继续)\n");
++    }
++
+     std::string crypto_blkdev;
+     uint64_t nr_sec;
+     if (!create_crypto_blk_dev(kDmNameUserdata, blk_device, key, options, &crypto_blkdev, &nr_sec,
+diff --git a/Weaver1.cpp b/Weaver1.cpp
+index a2eeaaa..09b6bfe 100644
+--- a/Weaver1.cpp
++++ b/Weaver1.cpp
+@@ -73,6 +73,11 @@ bool Weaver::GetConfig() {
+ 		return false;
+ 	}
+ 
++	/* [0017] AIDL 与 HIDL weaver 均不可用时 mDevice 为空 */
++	if (mDevice == nullptr) {
++		return false;
++	}
++
+ 	WeaverStatus status;
+ 	WeaverConfig cfg;
+ 

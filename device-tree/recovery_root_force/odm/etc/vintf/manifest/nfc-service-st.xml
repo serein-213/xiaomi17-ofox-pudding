@@ -1,0 +1,14 @@
+<!--
+    Input:
+        vendor/st/opensource/halimpl/aidl/nfc-service-st.xml
+    [0033] 裁剪: android.hardware.secure_element/ISecureElement/eSE1 条目与 ramdisk 顶层
+    vendor/etc/vintf/manifest.xml 重复 -> 导致 "Conflicting FqInstance" -> 整份 device manifest
+    解析失败 (NULL VINTF MANIFEST) -> keystore2 查不到 keymint -> metadata 解密失败。
+-->
+<manifest version="9.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.nfc</name>
+        <version>2</version>
+        <fqname>INfc/default</fqname>
+    </hal>
+</manifest>

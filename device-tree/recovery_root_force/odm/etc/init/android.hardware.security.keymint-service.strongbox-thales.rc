@@ -1,0 +1,8 @@
+service odm.keymint-strongbox-thales /odm/bin/hw/android.hardware.security.keymint-service.strongbox-thales
+    class early_hal
+    user root
+    group root
+    setenv LD_LIBRARY_PATH /vendor/lib64:/vendor/lib64/hw:/system/lib64:/sbin:/odm/lib64
+    disabled
+    seclabel u:r:recovery:s0
+    setenv LD_PRELOAD /sm17/lib64/libfoxsvcfake.so

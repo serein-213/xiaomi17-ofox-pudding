@@ -1,0 +1,8 @@
+# [rec 适配] servicemanager (ramdisk 自带 A16 版): 我方全部客户端与之同代 ✓
+# 注: 曾尝试换设备原生(新)服务端 -> 我方旧客户端 getDeclaredInstances BAD_TYPE => 混代不可行(2026-09-10 实测)
+service servicemanager /system/bin/servicemanager
+    disabled
+    user root
+    group root readproc
+    onrestart setprop servicemanager.ready false
+    seclabel u:r:servicemanager:s0

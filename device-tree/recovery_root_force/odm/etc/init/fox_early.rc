@@ -1,0 +1,6 @@
+# [0049] 稳定版: 只保留 VINTF/SKU 修复(已验证无害且必要).
+# 设备的真 vendor 用平台 SKU 主清单 (/vendor/etc/vintf/manifest_canoe.xml), libvintf 通过
+# ro.boot.product.vendor.sku 选择; recovery 启动时该属性为空 -> servicemanager 读不到任何
+# device manifest -> 所有 HAL 声明查询失败. 设置它可让 VINTF 正常工作.
+on early-init
+    setprop ro.boot.product.vendor.sku canoe
