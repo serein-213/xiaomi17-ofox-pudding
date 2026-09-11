@@ -187,7 +187,7 @@ else
 		echo "    尝试兜底: 直接设置 TARGET_* 变量"
 		# 产品名 = target 去掉 "-<release>-<variant>" 后缀 (如 twrp_sm8850_thales-bp2a-eng)
 		export TARGET_PRODUCT="${TARGET%-*-*}"
-		export TARGET_DEVICE="$OUT_PRODUCT"
+		export TARGET_DEVICE="${OUT_PRODUCT:-sm8850_thales}"
 		export TARGET_BUILD_VARIANT=eng
 		export TARGET_RELEASE=bp2a
 		export TARGET_BUILD_TYPE=release
@@ -227,8 +227,8 @@ echo "      M_BIN 可执行: $([ -x "$M_BIN" ] && echo 是 || echo 否)"
 if [ -x "$M_BIN" ]; then
 	echo "    → 使用 build/soong/bin/m"
 	set +e
-	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" \
-	    TARGET_DEVICE="${TARGET_DEVICE:?}" \
+	env TARGET_PRODUCT="${TARGET_PRODUCT:-twrp_$OUT_PRODUCT}" \
+	    TARGET_DEVICE="${TARGET_DEVICE:-$OUT_PRODUCT}" \
 	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" \
 	    TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
 	    TARGET_BUILD_TYPE=release \
@@ -260,7 +260,7 @@ if [ -x "$M_BIN" ]; then
 	fi
 elif [ -x build/soong/soong_ui.bash ]; then
 	echo "    → 回退 soong_ui.bash --make-mode (build/soong/bin/m 不可执行)"
-	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" TARGET_DEVICE="${TARGET_DEVICE:?}" \
+	env TARGET_PRODUCT="${TARGET_PRODUCT:-twrp_$OUT_PRODUCT}" TARGET_DEVICE="${TARGET_DEVICE:-$OUT_PRODUCT}" \
 	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
 	    build/soong/soong_ui.bash --make-mode -j"$JOBS" $BUILD_TARGETS
 else
