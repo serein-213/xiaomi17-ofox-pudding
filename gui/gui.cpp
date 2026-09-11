@@ -933,6 +933,7 @@ extern "C" int gui_loadResources(void)
 	PartitionManager.Mount_By_Path("/persist", false);
 	DataManager::LoadPersistValues();
 
+#endif
 	// [本地修复] 解密阶段 /sdcard 仍处于加密状态, 用户主题 /sdcard/Fox/.theme/style.xml
 	// 不可读, ui.xml 的 %fox_theme_path%/style.xml 会回退到 default=/twres/themes/style.xml
 	// (编译期基础层), 导致解密页配色与用户所选皮肤不一致。
@@ -951,7 +952,6 @@ extern "C" int gui_loadResources(void)
 			}
 		}
 	}
-#endif
 	TWFunc::FoxThemeCheck();
 #endif
 
