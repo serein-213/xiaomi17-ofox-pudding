@@ -99,10 +99,11 @@ echo "==> 3/5 lunch $TARGET"
 # AOSP 的 envsetup.sh 会引用 $TOP 等可能未定义的变量, 而本脚本开了 set -u(nounset),
 # 直接 source 会报 "TOP: unbound variable" 并退出。这里先补上 TOP, 再临时放宽 nounset。
 export TOP="$(pwd)"
+# envsetup.sh 和 lunch 内部大量引用可能未定义的变量(BUILD_VAR_CACHE_READY 等),
+# 全程必须在 nounset 关闭的状态下执行 —— 本地 build_pudding.sh 也是这么做的。
 set +u
 # shellcheck disable=SC1091
 . build/envsetup.sh
-set -u
 if ! lunch "$TARGET" >/dev/null 2>&1; then
 	echo "    lunch $TARGET 失败, 回退 $FALLBACK"
 	lunch "$FALLBACK"
