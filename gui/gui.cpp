@@ -932,6 +932,24 @@ extern "C" int gui_loadResources(void)
 	// (表现为: 解密页用默认主题, 解密完成后才切换成用户设置的主题)
 	PartitionManager.Mount_By_Path("/persist", false);
 	DataManager::LoadPersistValues();
+
+	// [本地修复] 解密阶段 /sdcard 仍处于加密状态, 用户主题 /sdcard/Fox/.theme/style.xml
+	// 不可读, ui.xml 的 %fox_theme_path%/style.xml 会回退到 default=/twres/themes/style.xml
+	// (编译期基础层), 导致解密页配色与用户所选皮肤不一致。
+	// 这里用刚从 /persist 读到的 theme_style, 把对应皮肤覆盖到 /twres 的基础层
+	// (/twres 是 rootfs, 可写), 使解密页与应用内主题保持一致。
+	{
+		string skin = DataManager::GetStrValue("theme_style");
+		if (!skin.empty())
+		{
+			string src = "/twres/themes/styles/" + skin + ".xml";
+			if (TWFunc::Path_Exists(src))
+			{
+				TWFunc::copy_file(src, "/twres/themes/style.xml", 0, false);
+				LOGINFO("Decrypt theme: applied skin '%s' to /twres/themes/style.xml\n", skin.c_str());
+			}
+		}
+	}
 #endif
 	TWFunc::FoxThemeCheck();
 #endif
