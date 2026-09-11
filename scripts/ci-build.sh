@@ -94,6 +94,26 @@ apply_patch build/make         "$REPO_ROOT/patches/build_make.patch"
 apply_patch frameworks/native  "$REPO_ROOT/patches/frameworks_native.patch"
 apply_patch system/security    "$REPO_ROOT/patches/system_security.patch"
 
+# R12.0 UI 移植(可选): SVG 渲染引擎 + Fox White/Dark 主题 + 164 个 SVG 图标 + Inter 字体
+if [ "${R12_UI_PORT:-1}" = "1" ] && [ -f "$REPO_ROOT/overlay/r12_ui/new_files.tar.gz" ]; then
+	echo "==> 2.5/5 应用 R12.0 UI 移植(SVG 引擎 + 新主题)"
+	if tar xzf "$REPO_ROOT/overlay/r12_ui/new_files.tar.gz" -C bootable/recovery/ 2>/dev/null; then
+		echo "	✓ 新增文件已就位(nanosvg / SVG 图标 / 主题 / 字体)"
+	else
+		echo "::error::R12 UI 移植: 解包新增文件失败"
+		exit 1
+	fi
+	if git -C bootable/recovery apply --check "$REPO_ROOT/patches/r12_ui_port.patch" 2>/dev/null; then
+		git -C bootable/recovery apply "$REPO_ROOT/patches/r12_ui_port.patch"
+		echo "	✓ R12.0 UI 补丁已应用(gui 层 + 主题层)"
+	else
+		echo "	! R12 UI 补丁无法应用(可能因源码树版本变化), 跳过 —— 构建将使用原 R11.3 界面"
+		echo "::warning::R12 UI 移植补丁应用失败, 已跳过(不影响构建, 但界面为 R11.3)"
+	fi
+else
+	echo "==> 2.5/5 跳过 R12.0 UI 移植(已禁用或包不存在)"
+fi
+
 # ---------- 3. lunch ----------
 echo "==> 3/5 lunch $TARGET"
 # shellcheck disable=SC1091

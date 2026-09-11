@@ -31,6 +31,8 @@ devices:
     upstream_tree: https://github.com/serein-213/twrp-xiaomi-17-series.git
     upstream_ref: main
     upstream_subdir: twrp_device_xiaomi_pudding   # 上游仓库里的子目录名(勿依赖模糊匹配)
+    # 移植 OrangeFox R12.0 的 SVG 渲染引擎与新主题(1=启用, 0=关闭)
+    r12_ui_port: 1
     enabled: true
 
   # 同一 SoC 平台(sm8750)的另一台设备。它**没有独立 recovery 分区**(走 vendor_boot),
