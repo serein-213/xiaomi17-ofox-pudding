@@ -106,6 +106,15 @@ export FOX_TARGET_DEVICES=sm8750
 set +u
 # shellcheck disable=SC1091
 . build/envsetup.sh
+# release 名(bp2a/ap2a)由 vendor/twrp/vars/aosp_target_release 决定;
+# TWRP-A16 上游的 vendor/twrp 未必带此文件(本地那份标注 "Updated manually"),
+# 缺失时补写, 否则 lunch 的 release 段解析不出来。
+if [ ! -f vendor/twrp/vars/aosp_target_release ]; then
+	mkdir -p vendor/twrp/vars
+	printf '# Updated by ci-build.sh\naosp_target_release=bp2a\n' > vendor/twrp/vars/aosp_target_release
+	echo "    已补写 vendor/twrp/vars/aosp_target_release (bp2a)"
+fi
+echo "    --- aosp_target_release ---"; cat vendor/twrp/vars/aosp_target_release 2>/dev/null | sed 's/^/      /'
 # 诊断: 设备树放置与可用 lunch 组合(roomservice 报 "Device X not found" 时靠这些定位)
 
 echo "    --- device/xiaomi/ ---"; ls device/xiaomi/ 2>/dev/null | sed 's/^/      /'
