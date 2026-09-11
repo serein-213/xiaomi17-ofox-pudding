@@ -109,7 +109,7 @@ jobs:
           restore-keys: ccache-${{ matrix.device.name }}-
 
       - name: 初始化源码树(浅克隆)
-        working-directory: ${{ env.SRC_ROOT }}
+        # 注意: 不能设 working-directory —— 该目录由本步创建, 否则 GitHub 无法启动
         run: |
           mkdir -p "$SRC_ROOT" && cd "$SRC_ROOT"
           git config --global user.name  "ci-builder"
@@ -122,12 +122,12 @@ jobs:
           echo "==> 源码树大小:"; du -sh . 2>/dev/null
 
       - name: 构建
-        working-directory: ${{ env.SRC_ROOT }}
         env:
           BUILD_JOBS: ${{ runner.cores }}
           CCACHE_DIR: ~/.ccache
           CCACHE_EXEC: /usr/bin/ccache
         run: |
+          cd "$SRC_ROOT"
           export USE_CCACHE=1
           ccache -M 8G || true
           bash "$GITHUB_WORKSPACE/repo/scripts/ci-build.sh" "${{ matrix.device.name }}"
