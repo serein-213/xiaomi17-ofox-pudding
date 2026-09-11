@@ -360,6 +360,7 @@ protected:
 
 	// GUI actions
 	int reboot(std::string arg);
+	int setvaluebyfile(std::string arg);
 	int home(std::string arg);
 	int key(std::string arg);
 	int page(std::string arg);
