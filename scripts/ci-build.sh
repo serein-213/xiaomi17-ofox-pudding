@@ -190,12 +190,34 @@ fi
 export TARGET_PRODUCT TARGET_DEVICE TARGET_BUILD_VARIANT TARGET_RELEASE 2>/dev/null || true
 echo "    TARGET_PRODUCT=${TARGET_PRODUCT:-?} TARGET_DEVICE=${TARGET_DEVICE:-?} TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT:-?}"
 
-echo "    TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT 2>/dev/null) TARGET_DEVICE=$(get_build_var TARGET_DEVICE 2>/dev/null)"
+echo "    env: TARGET_PRODUCT=${TARGET_PRODUCT:-} TARGET_DEVICE=${TARGET_DEVICE:-} TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT:-}"
 
 # ---------- 4. 编译 ----------
 echo "==> 4/5 编译: $BUILD_TARGETS"
 JOBS="${BUILD_JOBS:-$(nproc)}"
-m -j"$JOBS" $BUILD_TARGETS
+# 直接用 soong_ui, 不依赖 envsetup.sh 里的 m 函数 ——
+# 实测 CI 环境里 m 未解析成函数时会走到 make 调 build/core/config.mk 的守卫,
+# 直接 $(error done) 秒退("failed to build some targets (1 seconds)")。
+# soong_ui.bash --make-mode 是 AOSP 官方入口, 自己完成产品解析, 不依赖 lunch。
+# build/soong/bin/m 是与 mka 等价的真实脚本(envsetup 里的是 bash 函数, 子进程不可用)。
+# 本地 build_pudding.sh:220-222 用的就是它, 并注明 "soong_ui 每次启动即 Fatal 退出"。
+M_BIN="build/soong/bin/m"
+if [ -x "$M_BIN" ]; then
+	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" \
+	    TARGET_DEVICE="${TARGET_DEVICE:?}" \
+	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" \
+	    TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
+	    TARGET_BUILD_TYPE=release \
+	    "$M_BIN" -j"$JOBS" $BUILD_TARGETS
+elif [ -x build/soong/soong_ui.bash ]; then
+	echo "    (回退 soong_ui.bash --make-mode)"
+	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" TARGET_DEVICE="${TARGET_DEVICE:?}" \
+	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
+	    build/soong/soong_ui.bash --make-mode -j"$JOBS" $BUILD_TARGETS
+else
+	echo "::error::找不到 build/soong/bin/m 或 soong_ui.bash"
+	exit 1
+fi
 
 # ---------- 5. 收集产物 ----------
 echo "==> 5/5 收集产物"
