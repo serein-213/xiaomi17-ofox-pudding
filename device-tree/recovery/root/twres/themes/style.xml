@@ -243,10 +243,10 @@
 		<variable name="primary_500" value="#ed7002" />
 		<variable name="primary_600" value="#e65c00" />
 		<variable name="primary_700" value="#d84c00" />
-		<variable name="primary_800" value="#c73e00" />
-		<variable name="primary_900" value="#ae3200" />
-		<variable name="neutral_100" value="#f9f2e8" />
-		<variable name="neutral_200" value="#eedfc8" />
+		<variable name="primary_800" value="#712300" />
+		<variable name="primary_900" value="#601e00" />
+		<variable name="neutral_100" value="#ffe2bd" />
+		<variable name="neutral_200" value="#ffe2bd" />
 		<variable name="neutral_300" value="#c4a68b" />
 		<variable name="neutral_400" value="#c4a68b" />
 		<variable name="neutral_500" value="#957a63" />
@@ -255,36 +255,36 @@
 		<variable name="neutral_800" value="#271f17" />
 		<variable name="neutral_900" value="#130e0b" />
 
-		<variable name="background" value="#F9F1E7"/>
+		<variable name="background" value="#100E0D"/>
 
-		<variable name="power_bg" value="#F9F1E7"/>
-		<variable name="power_hl" value="#E9E9E944"/>
-		<variable name="highlight_color" value="#eedfc8"/>
-		<variable name="highlight_color_full" value="#eedfc8"/>
+		<variable name="power_bg" value="#000000"/>
+		<variable name="power_hl" value="#1B1C1F"/>
+		<variable name="highlight_color" value="#100E0D66"/>
+		<variable name="highlight_color_full" value="#12121444"/>
 
-		<variable name="text" value="#413327"/>
-		<variable name="text_secondary" value="#5F6368"/>
-		<variable name="text_action" value="#413327"/>
-		<variable name="text_status" value="#413327"/>
-		<variable name="text_menu" value="#271f17"/>
-		<variable name="text_light" value="#413327"/>
-		<variable name="text_hl_btn" value="#F9F1E7"/>
-		<variable name="text_dark" value="%neutral_800%"/>
+		<variable name="text" value="#ffe2bd"/>
+		<variable name="text_secondary" value="#807463"/>
+		<variable name="text_action" value="#ffe2bd"/>
+		<variable name="text_status" value="#FFFFFF"/>
+		<variable name="text_menu" value="#ffe2bd"/>
+		<variable name="text_light" value="#ffe2bd"/>
+		<variable name="text_hl_btn" value="#100E0D"/>
+		<variable name="text_dark" value="#ffe2bd"/>
 
-		<variable name="disabled_bg" value="%neutral_200%"/>
-		<variable name="disabled_text" value="%neutral_700%"/>
+		<variable name="disabled_bg" value="#1f1811"/>
+		<variable name="disabled_text" value="%neutral_200%"/>
 
 		<variable name="linecolor" value="#5F636844"/>
-		<variable name="darktransparent" value="#F9F1E7BB"/>
+		<variable name="darktransparent" value="#000000BB"/>
 		<variable name="theme_style" value="Dark"/>
 		<variable name="theme_style_act" value="Black"/>
-		<variable name="groupitems_clr" value="#FFF8F2"/>
+		<variable name="groupitems_clr" value="#1f1811"/>
 		<variable name="actbar_color" value="%text%"/>
-		<variable name="neutral_light" value="%neutral_200%"/>
+		<variable name="neutral_light" value="#1f1811"/>
 
-		<variable name="cards_bg" value="#FFF8F2"/>
+		<variable name="cards_bg" value="#1f1811"/>
 
-		<variable name="keyboard_bg" value="#F0E1CC"/>
-		<variable name="keyboard_hl" value="#F0E1CC66"/>
+		<variable name="keyboard_bg" value="#1f1811"/>
+		<variable name="keyboard_hl" value="#1f181166"/>
 	</variables>
 </recovery>
