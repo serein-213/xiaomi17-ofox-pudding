@@ -106,6 +106,13 @@ export FOX_TARGET_DEVICES=sm8750
 # envsetup.sh 和 lunch 内部大量引用可能未定义的变量(BUILD_VAR_CACHE_READY 等),
 # 全程必须在 nounset 关闭的状态下执行 —— 本地 build_pudding.sh 也是这么做的。
 set +u
+# lunch 内部走 check_product -> `command make -f build/core/config.mk dump-many-vars`。
+# AOSP 树里的 make 可能是包装器(实测报 "Unknown option: -f"), 会让 check_product 失败,
+# 从而把 lunch 误报成 "Don't have a product spec"。把系统 GNU make 所在目录提到 PATH 最前。
+if MAKE_REAL=$(command -v /usr/bin/make 2>/dev/null) && /usr/bin/make --version 2>/dev/null | grep -q "GNU Make"; then
+	export PATH="/usr/bin:$PATH"
+	echo "    使用系统 GNU make: $(/usr/bin/make --version | head -1)"
+fi
 # shellcheck disable=SC1091
 . build/envsetup.sh
 # release 名(bp2a/ap2a)由 vendor/twrp/vars/aosp_target_release 决定;
@@ -131,7 +138,7 @@ echo "    --- DIAG_CHECK_PRODUCT: device 目录实况 ---"
 ls -la "$DEVICE_DIR"/ 2>&1 | head -20 | sed 's/^/      /' || true
 echo "    --- DIAG_CHECK_PRODUCT: make dump-many-vars 实测 ---"
 TMPVARS=$(mktemp)
-if make -f build/core/config.mk dump-many-vars TARGET_PRODUCT="$TARGET" \
+if /usr/bin/make -f build/core/config.mk dump-many-vars TARGET_PRODUCT="$TARGET" \
 	TARGET_BUILD_VARIANT=eng TARGET_RELEASE=bp2a >"$TMPVARS" 2>&1; then
 	echo "      ✓ make dump-many-vars 成功"
 	grep -E "^(TARGET_PRODUCT|TARGET_DEVICE|TARGET_RELEASE)=" "$TMPVARS" | head -5 | sed 's/^/      /' || true
@@ -167,11 +174,15 @@ else
 		export TARGET_RELEASE=bp2a
 		export TARGET_BUILD_TYPE=release
 		echo "    TARGET_PRODUCT=$TARGET_PRODUCT TARGET_DEVICE=$TARGET_DEVICE"
-		if [ ! -d "out/target/product/$OUT_PRODUCT" ]; then
-			echo "::error::lunch 全部失败且兜底无效 (out/target/product/$OUT_PRODUCT 不存在)"
+		# 校验 product makefile 是否真的提供该产品(而不是检查尚未生成的 out/)
+		PMK="$DEVICE_DIR/$(echo "$TARGET" | sed 's/-[^-]*-[^-]*$//').mk"
+		if [ -f "$PMK" ] && grep -q "PRODUCT_NAME *:= *$(echo "$TARGET" | sed 's/-[^-]*-[^-]*$//')" "$PMK"; then
+			echo "    ✓ 兜底成立: $PMK 提供该产品, 直接进入编译"
+		else
+			echo "::error::lunch 全部失败且兜底无效 (未找到 $PMK 或其中无 PRODUCT_NAME)"
+			ls "$DEVICE_DIR"/twrp_*.mk 2>/dev/null | sed 's/^/      可用: /' || true
 			exit 1
 		fi
-		echo "    ✓ 兜底变量已设置"
 	fi
 	tail -12 "$LUNCH_LOG" | sed 's/^/      /'
 fi
