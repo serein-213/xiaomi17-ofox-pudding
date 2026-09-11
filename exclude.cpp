@@ -24,6 +24,7 @@ extern "C" {
 #include <dirent.h>
 #include <errno.h>
 #include <string>
+#include <cstring>
 #include <vector>
 #include "exclude.hpp"
 #include "twrp-functions.hpp"
@@ -75,6 +76,13 @@ uint64_t TWExclude::Get_Folder_Size(const string& Path) {
 	while ((de = readdir(d)) != NULL) {
 		FullPath = Path + "/";
 		FullPath += de->d_name;
+		/* [0129] 排除判定前移. check_skip_dirs() 是纯字符串比较, 不依赖 lstat 结果.
+		   原顺序是"先 lstat 再判排除", 而被排除的路径(例如 user_de 下面那些
+		   逐 app 的条目)在 SELinux 下每次 lstat 都被拒绝并产生一条 type=1400
+		   audit 日志 -- 实测启动阶段累计 1759 条 / 12.1 秒, 是启动页停留过长的主因.
+		   前移后输出数字与备份内容完全不变(被排除项本来贡献 0), 只是不再白扫. */
+		if (check_skip_dirs(FullPath))
+			continue;
 		if (lstat(FullPath.c_str(), &st)) {
 
 			// DJ9: avoid continued spamming of the log screen after a few reports
@@ -95,12 +103,10 @@ uint64_t TWExclude::Get_Folder_Size(const string& Path) {
 
 			continue;
 		}
-		if (!check_skip_dirs(FullPath)) {
-			if ((st.st_mode & S_IFDIR) && de->d_type != DT_SOCK) {
-				dusize += Get_Folder_Size(FullPath);
-			} else if (st.st_mode & S_IFREG || st.st_mode & S_IFLNK) {
-				dusize += (uint64_t)(st.st_size);
-			}
+		if ((st.st_mode & S_IFDIR) && de->d_type != DT_SOCK) {
+			dusize += Get_Folder_Size(FullPath);
+		} else if (st.st_mode & S_IFREG || st.st_mode & S_IFLNK) {
+			dusize += (uint64_t)(st.st_size);
 		}
 	}
 	closedir(d);
@@ -117,6 +123,7 @@ bool TWExclude::check_absolute_skip_dirs(const string& path) {
 
 bool TWExclude::check_skip_dirs(const string& path) {
 	string normalized = TWFunc::Remove_Trailing_Slashes(path);
+
 	size_t slashIdx = normalized.find_last_of('/');
 	if (slashIdx != std::string::npos && slashIdx+1 < normalized.size()) {
 		if (check_relative_skip_dirs(normalized.substr(slashIdx+1)))

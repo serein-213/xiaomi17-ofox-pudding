@@ -1454,6 +1454,7 @@ void GUIAction::reinject_after_flash()
     }
 }
 
+#ifdef TW_OZIP_DECRYPT_KEY
 int GUIAction::ozip_decrypt(string zip_path)
 {
    if (!TWFunc::Path_Exists(Fox_Bin_Dir + "/ozip_decrypt"))
@@ -1465,6 +1466,7 @@ int GUIAction::ozip_decrypt(string zip_path)
    gui_msg("ozip_decrypt_finish=Ozip Decryption Finished!");
    return 0;
 }
+#endif
 
 int GUIAction::flash(std::string arg)
 {
@@ -1481,6 +1483,7 @@ int GUIAction::flash(std::string arg)
       string zip_filename = (slashpos == string::npos) ? zip_path : zip_path.substr(slashpos + 1);
       operation_start("Flashing");
 
+#ifdef TW_OZIP_DECRYPT_KEY
       if ((zip_path.substr(zip_path.size() - 4, 4)) == "ozip")
 	{
 		if ((ozip_decrypt(zip_path)) != 0)
@@ -1495,6 +1498,7 @@ int GUIAction::flash(std::string arg)
 			break;
 		}
 	}
+#endif
 
       DataManager::SetValue("tw_filename", zip_path);
       DataManager::SetValue("tw_file", zip_filename);

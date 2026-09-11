@@ -4348,6 +4348,8 @@ bool TWFunc::Get_Service_From_Manifest(std::string basepath, std::string service
 				std::string type = child->name();
 				if (type == "hal") {
 					xml_node<>* nameNode = child->first_node("name");
+					/* [0017] <hal> 可能没有 <name> 子节点 => 空指针解引用 */
+					if (nameNode == nullptr) continue;
 					type = nameNode->value();
 					if (type == service) {
 						xml_node<> *versionNode = child->first_node("version");

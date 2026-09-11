@@ -488,6 +488,10 @@ int twrpTruetype::gr_ttf_measureEx(const char *s, void *font) {
 	TrueTypeFont *f = (TrueTypeFont *)font;
 	int res = -1;
 
+	/* [0018] font 可能为 NULL: GUIInput::UpdateDisplayText() 在字体资源失效时会传空指针,
+	 * 原代码直接 pthread_mutex_lock(&f->mutex) -> lock(NULL+0x50) SIGSEGV */
+	if (f == nullptr) return res;
+
 	pthread_mutex_lock(&f->mutex);
 	gr_ttf_string_cache_truncate(f);
 	StringCacheEntry *e = gr_ttf_string_cache_get(f, s, -1);
@@ -500,6 +504,7 @@ int twrpTruetype::gr_ttf_measureEx(const char *s, void *font) {
 
 int twrpTruetype::gr_ttf_maxExW(const char *s, void *font, int max_width) {
 	TrueTypeFont *f = (TrueTypeFont *)font;
+	if (f == nullptr) return 0;   /* [0018] */
 	TrueTypeCacheEntry *ent;
 	int max_bytes = 0, total_w = 0;
 	int utf_bytes, prev_utf_bytes = 0;
@@ -553,6 +558,7 @@ int twrpTruetype::gr_ttf_textExWH(void *context, int x, int y,
 	GGLContext *gl = (GGLContext *)context;
 	TrueTypeFont *font = (TrueTypeFont *)pFont;
 	const GRSurface *gr_draw = (const GRSurface*) gr_draw_surface;
+	if (font == nullptr) return -1;   /* [0018] */
 
 	// not actualy max width, but max_width + x
 	if(max_width != -1)
@@ -637,6 +643,7 @@ int twrpTruetype::gr_ttf_textExWH(void *context, int x, int y,
 int twrpTruetype::gr_ttf_getMaxFontHeight(void *font) {
 	int res;
 	TrueTypeFont *f = (TrueTypeFont *)font;
+	if (f == nullptr) return 0;   /* [0018] */
 
 	pthread_mutex_lock(&f->mutex);
 
