@@ -490,3 +490,25 @@ index 71bbc967..dac63db1 100644
  	DataManager::LoadPersistValues();
  #endif
  	TWFunc::FoxThemeCheck();
+diff --git a/gui/Android.bp b/gui/Android.bp
+index d7a69092..fc51ea5d 100644
+--- a/gui/Android.bp
++++ b/gui/Android.bp
+@@ -20,6 +20,7 @@ libguitwrp_defaults {
+ }
+ 
+ cc_library_static {
++    header_libs: ["libvold_headers"],
+     name: "libguitwrp",
+     defaults: ["libguitwrp_defaults", "twrp_defaults"],
+     rtti: true,
+@@ -30,7 +31,8 @@ cc_library_static {
+         "-Wno-unused-function",
+         "-Wno-unused-variable",
+         "-D_USE_SYSTEM_ZIPARCHIVE",
+-        "-DTWRES=\"/twres/\""
++        "-DTWRES=\"/twres/\"",
++        "-DFOX_ALLOW_EARLY_SETTINGS_LOAD=1"
+     ],
+     include_dirs: [
+         "bootable/recovery/otautil/include",
