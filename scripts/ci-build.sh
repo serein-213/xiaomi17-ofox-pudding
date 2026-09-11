@@ -106,10 +106,25 @@ export FOX_TARGET_DEVICES=sm8750
 set +u
 # shellcheck disable=SC1091
 . build/envsetup.sh
-if ! lunch "$TARGET" >/dev/null 2>&1; then
+# 诊断: 设备树放置与可用 lunch 组合(roomservice 报 "Device X not found" 时靠这些定位)
+
+echo "    --- device/xiaomi/ ---"; ls device/xiaomi/ 2>/dev/null | sed 's/^/      /'
+
+echo "    --- $DEVICE_DIR 关键文件 ---"; ls AndroidProducts.mk BoardConfig.mk twrp_*.mk 2>/dev/null | sed 's/^/      /'
+
+echo "    --- AndroidProducts.mk ---"; grep -vE '^[[:space:]]*#|^[[:space:]]*$' "$DEVICE_DIR/AndroidProducts.mk" 2>/dev/null | sed 's/^/      /'
+
+# 第一次 lunch 也保留输出, 否则失败原因被 /dev/null 吞掉
+
+if ! lunch "$TARGET" 2>&1 | tail -12 | sed 's/^/      /'; then
+
 	echo "    lunch $TARGET 失败, 回退 $FALLBACK"
-	lunch "$FALLBACK"
+
+	lunch "$FALLBACK" 2>&1 | tail -12 | sed 's/^/      /'
+
 fi
+
+echo "    TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT 2>/dev/null) TARGET_DEVICE=$(get_build_var TARGET_DEVICE 2>/dev/null)"
 
 # ---------- 4. 编译 ----------
 echo "==> 4/5 编译: $BUILD_TARGETS"
