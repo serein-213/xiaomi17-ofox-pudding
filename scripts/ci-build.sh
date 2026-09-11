@@ -96,6 +96,24 @@ apply_patch build/make         "$REPO_ROOT/patches/build_make.patch"
 apply_patch frameworks/native  "$REPO_ROOT/patches/frameworks_native.patch"
 apply_patch system/security    "$REPO_ROOT/patches/system_security.patch"
 
+# ---------- 2.5 soong Android.mk 允许清单 ----------
+# OFOX16 manifest 的 external/magisk-prebuilt/Android.mk 命中 soong 黑名单
+# (build/soong/ui/build/androidmk_denylist.go 里 external/ 在前缀列表中),
+# 命中即 ctx.Fatalf 直接退出, 表现为 out/soong.log 在
+# "Found blocked Android.mk file: external/magisk-prebuilt/Android.mk" 处中断,
+# CI 日志里只看到 "failed to build some targets"。
+# 本地 build_pudding.sh:189-195 就是把它写进 allowlist 解决的。
+echo "==> 2.5/5 写入 soong Android.mk allowlist"
+AWDIR="vendor/google/build/androidmk"
+mkdir -p "$AWDIR"
+if [ -f "$AWDIR/allowlist.txt" ]; then
+	grep -qxF 'external/magisk-prebuilt/Android.mk' "$AWDIR/allowlist.txt" || \
+		printf 'external/magisk-prebuilt/Android.mk\n' >> "$AWDIR/allowlist.txt"
+else
+	printf 'external/magisk-prebuilt/Android.mk\n' > "$AWDIR/allowlist.txt"
+fi
+echo "    ✓ allowlist 内容:"; sed 's/^/      /' "$AWDIR/allowlist.txt"
+
 # ---------- 3. lunch ----------
 echo "==> 3/5 lunch $TARGET"
 # AOSP 的 envsetup.sh 会引用 $TOP 等可能未定义的变量, 而本脚本开了 set -u(nounset),
