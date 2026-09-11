@@ -202,7 +202,12 @@ JOBS="${BUILD_JOBS:-$(nproc)}"
 # build/soong/bin/m 是与 mka 等价的真实脚本(envsetup 里的是 bash 函数, 子进程不可用)。
 # 本地 build_pudding.sh:220-222 用的就是它, 并注明 "soong_ui 每次启动即 Fatal 退出"。
 M_BIN="build/soong/bin/m"
+echo "    --- 编译入口探测 ---"
+ls -la "$M_BIN" 2>&1 | sed 's/^/      /' || echo "      (build/soong/bin/m 不存在)"
+ls -la build/soong/soong_ui.bash 2>&1 | sed 's/^/      /' || true
+echo "      M_BIN 可执行: $([ -x "$M_BIN" ] && echo 是 || echo 否)"
 if [ -x "$M_BIN" ]; then
+	echo "    → 使用 build/soong/bin/m"
 	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" \
 	    TARGET_DEVICE="${TARGET_DEVICE:?}" \
 	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" \
@@ -210,7 +215,7 @@ if [ -x "$M_BIN" ]; then
 	    TARGET_BUILD_TYPE=release \
 	    "$M_BIN" -j"$JOBS" $BUILD_TARGETS
 elif [ -x build/soong/soong_ui.bash ]; then
-	echo "    (回退 soong_ui.bash --make-mode)"
+	echo "    → 回退 soong_ui.bash --make-mode (build/soong/bin/m 不可执行)"
 	env TARGET_PRODUCT="${TARGET_PRODUCT:?}" TARGET_DEVICE="${TARGET_DEVICE:?}" \
 	    TARGET_BUILD_VARIANT="${TARGET_BUILD_VARIANT:-eng}" TARGET_RELEASE="${TARGET_RELEASE:-bp2a}" \
 	    build/soong/soong_ui.bash --make-mode -j"$JOBS" $BUILD_TARGETS
