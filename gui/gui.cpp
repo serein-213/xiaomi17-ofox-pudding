@@ -1041,7 +1041,7 @@ extern "C" int gui_loadResources(void)
 		if (TWFunc::Path_Exists(user_theme))
 		{
 			if (!TWFunc::Path_Exists("/persist/Fox/.theme"))
-				TWFunc::create_dir("/persist/Fox/.theme");
+				PartitionManager.Make_Dir("/persist/Fox/.theme", false);
 			TWFunc::copy_file(user_theme, mirror, 0, false);
 			printf("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
 		}
