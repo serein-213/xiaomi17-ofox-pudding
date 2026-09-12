@@ -259,7 +259,7 @@ FOX_DEVICE_MODEL := Xiaomi 17 (pudding)
 # 实测: 引导器通过内核命令行传入 swinfo.fingerprint=pudding:... ⇒ 运行时
 # ro.build.product 被推导为 pudding(静态 prop 文件里的 sm8850 被覆盖)。
 # 因此安装包还必须接受 pudding, 否则卡刷时报"设备不匹配"。
-FOX_TARGET_DEVICES := sm8750 pudding
+FOX_TARGET_DEVICES := pudding
 
 # 让 recovery 在解密之前就从 /persist 读取设置并应用主题。
 # 否则加密设备的解密页面用默认主题(Cream=亮色), 解密后才切成用户设置的主题

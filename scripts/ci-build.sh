@@ -120,7 +120,7 @@ echo "==> 3/5 lunch $TARGET"
 # 直接 source 会报 "TOP: unbound variable" 并退出。这里先补上 TOP, 再临时放宽 nounset。
 export TOP="$(pwd)"
 # 安装包同时接受 sm8850(实际 SoC) 与 sm8750(历史代号), 写入 update-binary 的 TARGET_DEVICE_ALT
-export FOX_TARGET_DEVICES="sm8750 pudding"
+export FOX_TARGET_DEVICES="pudding"
 # envsetup.sh 和 lunch 内部大量引用可能未定义的变量(BUILD_VAR_CACHE_READY 等),
 # 全程必须在 nounset 关闭的状态下执行 —— 本地 build_pudding.sh 也是这么做的。
 set +u
