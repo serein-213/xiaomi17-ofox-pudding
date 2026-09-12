@@ -822,6 +822,7 @@ void DataManager::SetDefaultValues()
   // number of options in some listboxes before a scrollbar is needed
   int lnum = 360;
   int lnum2 = 540;
+  int lnum_group = 512;
   #ifdef OF_OPTIONS_LIST_NUM
 	int cv = atoi(OF_OPTIONS_LIST_NUM);
 	// restrict the permissible range to something sensible
@@ -841,9 +842,12 @@ void DataManager::SetDefaultValues()
 	lnum = (cv * 90);
 	if (lnum > lnum2)
 		lnum2 = lnum;
+
+  lnum_group = (cv * 144 + (144 * 2));
   #endif
   mConst.SetValue("options_list_num", lnum);
   mConst.SetValue("options_list_num_2", lnum2);
+  mConst.SetValue("options_list_num_group", lnum_group);
 
   #ifdef OF_ENABLE_LAB
     mConst.SetValue("fox_lab", "1");
