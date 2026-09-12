@@ -759,6 +759,8 @@ void DataManager::SetDefaultValues()
   mConst.SetValue("fox_settings_path", Fox_Settings_Path);
   mConst.SetValue("fox_home_files", Fox_Home_Files);
   mConst.SetValue("fox_theme_path", FOX_THEME_PATH);
+  mConst.SetValue("fox_media_rw", FOX_MEDIA_RW);
+  mConst.SetValue("fox_media_rw_data_file", FOX_MEDIA_RW_DATA_FILE);
   mConst.SetValue("fox_navbar_path", FOX_NAVBAR_PATH);
   mConst.SetValue("fox_ota_path", FOX_OTA_PATH);
   mConst.SetValue("aroma_fm_zip", Fox_Home_Files + "/AromaFM/AromaFM.zip");

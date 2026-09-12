@@ -19,6 +19,8 @@
  */
 
 #ifndef _VARIABLES_HEADER_
+#define FOX_MEDIA_RW			"media_rw:media_rw"
+#define FOX_MEDIA_RW_DATA_FILE		"u:object_r:media_rw_data_file:s0"
 #define _VARIABLES_HEADER_
 
 #define FOX_RECOVERY_NAME	"OrangeFox"
