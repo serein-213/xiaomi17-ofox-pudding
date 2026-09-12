@@ -985,8 +985,7 @@ extern "C" int gui_loadResources(void)
 				if (found)
 					continue;
 				mirror_ok = false;
-				LOGINFO("Decrypt theme: mirror skipped (asset missing: %s / %s)\n",
-				        asset.c_str(), alt.c_str());
+				LOGINFO("Decrypt theme: mirror skipped (asset missing: %s)\n", asset.c_str());
 			}
 		}
 		if (mirror_ok)
