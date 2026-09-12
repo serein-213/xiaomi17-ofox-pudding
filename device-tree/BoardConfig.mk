@@ -256,7 +256,10 @@ FOX_DEVICE_MODEL := Xiaomi 17 (pudding)
 
 # 本机 SoC 实际是 sm8850, 但设备树历史上叫 sm8750 ⇒ 让安装包同时接受两个代号
 # (OrangeFox 生成器会把它写进 update-binary 的 TARGET_DEVICE_ALT)
-FOX_TARGET_DEVICES := sm8750
+# 实测: 引导器通过内核命令行传入 swinfo.fingerprint=pudding:... ⇒ 运行时
+# ro.build.product 被推导为 pudding(静态 prop 文件里的 sm8850 被覆盖)。
+# 因此安装包还必须接受 pudding, 否则卡刷时报"设备不匹配"。
+FOX_TARGET_DEVICES := sm8750 pudding
 
 # 让 recovery 在解密之前就从 /persist 读取设置并应用主题。
 # 否则加密设备的解密页面用默认主题(Cream=亮色), 解密后才切成用户设置的主题
