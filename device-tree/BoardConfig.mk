@@ -260,6 +260,12 @@ FOX_DEVICE_MODEL := Xiaomi 17 (pudding)
 # ro.build.product 被推导为 pudding(静态 prop 文件里的 sm8850 被覆盖)。
 # 因此安装包还必须接受 pudding, 否则卡刷时报"设备不匹配"。
 FOX_TARGET_DEVICES := pudding
+# AromaFM 是 2018 年的 AROMA-based 文件管理器(内部文件时间戳 2018-02)，
+# 依赖已不存在的 AROMA 运行框架，在 A16 底座上启动即报错：
+#   "安装 Zip 刷机包 /sdcard/Fox/FoxFiles/AromaFM/AromaFM.zip 时出错"
+# 官方打包脚本有开关可移除(vendor/recovery/OrangeFox_A16.sh:737)。
+# recovery 自带文件管理器，移除无功能损失。
+FOX_DELETE_AROMAFM := 1
 
 # 让 recovery 在解密之前就从 /persist 读取设置并应用主题。
 # 否则加密设备的解密页面用默认主题(Cream=亮色), 解密后才切成用户设置的主题
