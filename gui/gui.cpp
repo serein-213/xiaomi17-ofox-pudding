@@ -937,7 +937,45 @@ extern "C" int gui_loadResources(void)
 		const string persist_theme = "/persist/Fox/.theme/style.xml";
 		LOGINFO("DECRYPT_THEME_PROBE persist_mirror=%d\n",
 		        TWFunc::Path_Exists(persist_theme) ? 1 : 0);
-		if (TWFunc::Path_Exists(persist_theme))
+		// [本地修复] MIRROR_COMPAT_CHECK: /persist 镜像是跨版本共享的, 可能来自
+		// 另一个版本(R11.3 与 R12 的主题形态不同: R11.3 用 PNG 键盘且无 SVG 目录,
+		// R12 用 SVG 键盘)。把不匹配的主题套到解密页会让渲染资源全部缺失 ——
+		// 实测表现为 "A render request has failed." 刷屏、界面爆红。
+		// 这里做资源存在性校验: 读出镜像里 keyback / keyback_num 指向的文件,
+		// 若在 /twres 下不存在则跳过镜像, 保留编译期基础层配色。
+		bool mirror_ok = TWFunc::Path_Exists(persist_theme);
+		if (mirror_ok)
+		{
+			string probe;
+			TWFunc::read_file(persist_theme, probe);
+			const char *keys[] = {"keyback", "keyback_num"};
+			for (size_t ki = 0; ki < 2 && mirror_ok; ++ki)
+			{
+				string needle = string("name=\"") + keys[ki] + "\"";
+				size_t np = probe.find(needle);
+				if (np == string::npos)
+					continue;
+				size_t fp = probe.find("filename=\"", np);
+				if (fp == string::npos)
+					continue;
+				fp += 10;
+				size_t fe = probe.find('"', fp);
+				if (fe == string::npos)
+					continue;
+				string asset = probe.substr(fp, fe - fp);
+				if (TWFunc::Path_Exists("/twres/" + asset))
+					continue;
+				// SVG/... 与 (无前缀的)Keyboard/... 分别对应两代的目录布局
+				string alt = (asset.compare(0, 4, "SVG/") == 0)
+					? asset.substr(4) : ("SVG/" + asset);
+				if (TWFunc::Path_Exists("/twres/" + alt))
+					continue;
+				mirror_ok = false;
+				LOGINFO("Decrypt theme: mirror skipped (asset missing: %s / %s)\n",
+				        asset.c_str(), alt.c_str());
+			}
+		}
+		if (mirror_ok)
 		{
 			TWFunc::copy_file(persist_theme, "/twres/themes/style.xml", 0, false);
 			LOGINFO("Decrypt theme: restored user theme from %s\n", persist_theme.c_str());
