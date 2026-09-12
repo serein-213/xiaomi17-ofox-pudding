@@ -973,11 +973,27 @@ extern "C" int gui_loadResources(void)
 				size_t fe = probe.find('"', fp);
 				if (fe == string::npos) continue;
 				string asset = probe.substr(fp, fe - fp);
-				if (TWFunc::Path_Exists("/twres/" + asset)) continue;
+				// 实际资源路径形如 /twres/images/<皮肤>/Keyboard/key_butts.png
+			// (style.xml 里写的是不带扩展名的相对名, 且 R12 可能带 SVG/ 前缀与 .svg 后缀)
+			// 逐个候选路径探测, 任一存在即视为兼容。
+			const char *prefixes[] = {"/twres/images/", "/twres/", "/twres/images/SVG/"};
+			const char *suffixes[] = {".png", ".svg", ""};
+			bool found = false;
+			for (size_t pi = 0; pi < 3 && !found; ++pi)
+				for (size_t si = 0; si < 3 && !found; ++si)
+					if (TWFunc::Path_Exists(string(prefixes[pi]) + asset + suffixes[si]))
+						found = true;
+			if (!found)
+			{
 				string alt = (asset.compare(0, 4, "SVG/") == 0)
 					? asset.substr(4) : ("SVG/" + asset);
-				if (TWFunc::Path_Exists("/twres/" + alt)) continue;
-				mirror_ok = false;
+				for (size_t pi = 0; pi < 3 && !found; ++pi)
+					for (size_t si = 0; si < 3 && !found; ++si)
+						if (TWFunc::Path_Exists(string(prefixes[pi]) + alt + suffixes[si]))
+							found = true;
+			}
+			if (found) continue;
+			mirror_ok = false;
 				LOGINFO("Decrypt theme: mirror skipped (asset missing: %s / %s)\n",
 				        asset.c_str(), alt.c_str());
 			}
