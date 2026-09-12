@@ -924,21 +924,37 @@ extern "C" int gui_loadResources(void)
 	PartitionManager.Mount_By_Path("/persist", false);
 	DataManager::LoadPersistValues();
 
-	// [本地修复] 解密阶段 /sdcard 仍处于加密状态, 用户主题 /sdcard/Fox/.theme/style.xml
-	// 不可读, ui.xml 的 %fox_theme_path%/style.xml 会回退到 default=/twres/themes/style.xml
-	// (编译期基础层), 导致解密页配色与用户所选皮肤不一致。
-	// 这里用刚从 /persist 读到的 theme_style, 把对应皮肤覆盖到 /twres 的基础层
-	// (/twres 是 rootfs, 可写), 使解密页与应用内主题保持一致。
+	// [本地修复] 解密页配色跟随用户皮肤。
+	// 背景: 换皮肤时 customization.xml 把 /twres/themes/styles/<X>.xml 拷贝到
+	//       %fox_theme_path%/style.xml (即 /sdcard/Fox/.theme/style.xml);
+	//       解密阶段 /sdcard 仍处于加密状态读不到 => ui.xml 的
+	//       %fox_theme_path%/style.xml 回退 default=/twres/themes/style.xml(编译期基础层),
+	//       导致解密页配色与用户所选皮肤不一致。
+	//       theme_style 只是主题 XML 里的变量, 不在 /persist/.foxs 中(实测确认),
+	//       所以不能用它判断; 改为在换皮肤时把同一份内容镜像到 /persist, 这里读回。
+	//       (/twres 是 rootfs, 可写)
 	{
-		string skin = DataManager::GetStrValue("theme_style");
-		if (!skin.empty())
+		const string persist_theme = "/persist/Fox/.theme/style.xml";
+		LOGINFO("DECRYPT_THEME_PROBE persist_mirror=%d\n",
+		        TWFunc::Path_Exists(persist_theme) ? 1 : 0);
+		if (TWFunc::Path_Exists(persist_theme))
 		{
-			string src = "/twres/themes/styles/" + skin + ".xml";
-			if (TWFunc::Path_Exists(src))
+			TWFunc::copy_file(persist_theme, "/twres/themes/style.xml", 0, false);
+			LOGINFO("Decrypt theme: restored user theme from %s\n", persist_theme.c_str());
+			LOGINFO("DECRYPT_THEME_APPLIED=%s\n", persist_theme.c_str());
+		}
+		else
+		{
+			// 兼容: 若设置里恰好有 theme_style(某些版本会持久化), 也套用它
+			string skin = DataManager::GetStrValue("theme_style");
+			if (!skin.empty())
 			{
-				TWFunc::copy_file(src, "/twres/themes/style.xml", 0, false);
-				LOGINFO("Decrypt theme: applied skin '%s' to /twres/themes/style.xml\n", skin.c_str());
-				printf("DECRYPT_THEME_APPLIED=%s\n", skin.c_str());
+				string src = "/twres/themes/styles/" + skin + ".xml";
+				if (TWFunc::Path_Exists(src))
+				{
+					TWFunc::copy_file(src, "/twres/themes/style.xml", 0, false);
+					LOGINFO("DECRYPT_THEME_APPLIED=%s (by theme_style)\n", skin.c_str());
+				}
 			}
 		}
 	}
@@ -1059,6 +1075,20 @@ extern "C" int gui_start(void)
 
 extern "C" int gui_startPage(const char *page_name, const int allow_commands, int stop_on_page_done)
 {
+	// [本地修复] SYNC_THEME_MIRROR: /sdcard 可读时把用户主题镜像到 /persist。
+	// 放在此函数是因为 twrp.cpp 的 decrypt / reapply_settings / main 三条路径都经过它。
+	// /sdcard 未挂载时 Path_Exists 为假, 天然跳过, 不影响解密页。
+	{
+		const string user_theme = "/sdcard/Fox/.theme/style.xml";
+		const string mirror = "/persist/Fox/.theme/style.xml";
+		if (TWFunc::Path_Exists(user_theme))
+		{
+			if (!TWFunc::Path_Exists("/persist/Fox/.theme"))
+				mkdir("/persist/Fox/.theme", 0777);
+			TWFunc::copy_file(user_theme, mirror, 0, false);
+			LOGINFO("SYNC_THEME_MIRROR done -> %s\n", mirror.c_str());
+		}
+	}
 	if (!gGuiInitialized)
 		return -1;
 
