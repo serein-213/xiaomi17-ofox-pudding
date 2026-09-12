@@ -90,12 +90,21 @@ jobs:
         run: |
           echo "内存情况:"; free -h
           SWAPFILE=/mnt/swapfile
-          sudo fallocate -l 16G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=16384 status=none
+          # 24GB: 本地构建实测峰值用了 19GB swap(30GB RAM + 31GB swap 的机器),
+          # runner 只有 15.6GB RAM, 16GB swap 仍不够, 提到 24GB。
+          sudo fallocate -l 24G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=24576 status=none
           sudo chmod 600 "$SWAPFILE"
           sudo mkswap "$SWAPFILE"
           sudo swapon "$SWAPFILE"
+          # 默认 swappiness=60, soong_build(Go) 的匿名页压力大, 调到 100 更积极换出,
+          # 避免 OOM killer 直接杀进程; vfs_cache_pressure 降低保留目录缓存,
+          # 否则 AOSP 几十万个文件的 stat 会被反复换出(swap thrashing)。
+          sudo sysctl -w vm.swappiness=100
+          sudo sysctl -w vm.vfs_cache_pressure=50
+          sudo sysctl -w vm.overcommit_memory=1
           echo "swap 就绪:"; free -h
-          echo "swappiness:"; cat /proc/sys/vm/swappiness
+          echo "vm 参数:"; sysctl vm.swappiness vm.vfs_cache_pressure vm.overcommit_memory
+          echo "磁盘:"; df -h / | tail -1
 
       - name: 安装依赖
         run: |
