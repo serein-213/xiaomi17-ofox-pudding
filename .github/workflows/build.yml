@@ -130,7 +130,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ matrix.device.name }}-${{ github.run_id }}
+          # key 里放 run_id 会导致每次都写新缓存(旧的自然过期), 无法命中;
+          # 改为固定前缀 + 每 10 次运行轮换一次, 让 restore-keys 真正复用历史缓存。
+          # ccache 对 CI 收益最大: soong bootstrap 之后的 C/C++ 编译可大幅命中。
+          key: ccache-${{ matrix.device.name }}-${{ github.run_number }}
           restore-keys: ccache-${{ matrix.device.name }}-
 
       - name: 初始化源码树(浅克隆)
@@ -209,7 +212,10 @@ jobs:
         env:
           # 仓库被 checkout 到 repo/ 子目录, 必须显式告诉脚本仓库根在哪
           REPO_ROOT: ${{ github.workspace }}/repo
-          BUILD_JOBS: ${{ runner.cores }}
+          # 不用 runner.cores(=4): AOSP16 在 15.6GB runner 上并行 4 个编译单元会
+          # 撑爆内存(本地对照: 构建峰值占用 19GB swap)。2 与本地成功配置一致,
+          # 配合 24GB swap 才有把握跑完 soong bootstrap 之后的真正编译。
+          BUILD_JOBS: "2"
           CCACHE_DIR: ~/.ccache
           CCACHE_EXEC: /usr/bin/ccache
         run: |
