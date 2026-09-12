@@ -201,6 +201,61 @@ jobs:
           echo "===> 已写入 local_manifest: bootable/recovery → OrangeFox16/fox_16.0"
           grep -c "bootable/recovery" .repo/local_manifests/orangefox.xml | sed 's/^/      条目数: /'
 
+          # ★ 关键2: 上游 TWRP manifest 的 remove-minimal.xml 删除了 603 个"瘦身"项目,
+          # 但本设备(pudding/SM8750)的依赖链需要其中 36 个:
+          #   system/media -> libmedia/libstagefright/codecs + libhwui 图形栈
+          #   (来源链: vendor.display.config -> 这些库)
+          # 缺 system/media 时的报错:
+          #   frameworks/av/media/libmedia/include/media/AudioCapabilities.h:24:10:
+          #   fatal error: 'system/audio.h' file not found
+          #   FAILED: //frameworks/av/media/libmedia:libmedia_codeclist_capabilities
+          # 用 tuna(清华 AOSP 镜像)把 36 个项目补回 —— 与本地构建树的
+          # .repo/local_manifests/restore-system-media.xml 完全一致。
+          cat > .repo/local_manifests/restore-system-media.xml <<'XML'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remote name="tuna" fetch="https://mirrors.tuna.tsinghua.edu.cn/git/AOSP" />
+            <project path="system/media" name="platform/system/media" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="system/libsysprop" name="platform/system/libsysprop" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/speex" name="platform/external/speex" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/sonivox" name="platform/external/sonivox" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libjpeg-turbo" name="platform/external/libjpeg-turbo" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libavc" name="platform/external/libavc" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/aac" name="platform/external/aac" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libhevc" name="platform/external/libhevc" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/vulkan-headers" name="platform/external/vulkan-headers" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libogg" name="platform/external/libogg" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libopus" name="platform/external/libopus" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/flac" name="platform/external/flac" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libvpx" name="platform/external/libvpx" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libwebm" name="platform/external/libwebm" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libgsm" name="platform/external/libgsm" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libmpeg2" name="platform/external/libmpeg2" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libaom" name="platform/external/libaom" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/image_io" name="platform/external/image_io" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/giflib" name="platform/external/giflib" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/webp" name="platform/external/webp" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/harfbuzz_ng" name="platform/external/harfbuzz_ng" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="frameworks/minikin" name="platform/frameworks/minikin" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/pdfium" name="platform/external/pdfium" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/rust/crabbyavif" name="platform/external/rust/crabbyavif" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="frameworks/proto_logging" name="platform/frameworks/proto_logging" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/flatbuffers" name="platform/external/flatbuffers" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/tensorflow" name="platform/external/tensorflow" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/FP16" name="platform/external/FP16" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/gemmlowp" name="platform/external/gemmlowp" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/ruy" name="platform/external/ruy" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/fft2d" name="platform/external/fft2d" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/libtextclassifier" name="platform/external/libtextclassifier" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/eigen" name="platform/external/eigen" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="system/bpf" name="platform/system/bpf" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="system/bpfprogs" name="platform/system/bpfprogs" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+            <project path="external/bcc" name="platform/external/bcc" remote="tuna" revision="refs/tags/android-16.0.0_r1" groups="pdk" />
+          </manifest>
+          XML
+          echo "===> 已写入 local_manifest: 恢复 36 个被 remove-minimal 移除的项目"
+          grep -c "<project" .repo/local_manifests/restore-system-media.xml | sed 's/^/      恢复条目数: /'
+
           echo "===> 4/4 repo sync"
           if ! repo sync -c -j"$(nproc)" --no-clone-bundle --no-tags 2>&1 | tail -40; then
             echo "::error::repo sync 失败 (见上方输出)"
