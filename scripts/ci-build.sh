@@ -212,7 +212,9 @@ echo "    env: TARGET_PRODUCT=${TARGET_PRODUCT:-} TARGET_DEVICE=${TARGET_DEVICE:
 
 # ---------- 4. 编译 ----------
 echo "==> 4/5 编译: $BUILD_TARGETS"
-JOBS="${BUILD_JOBS:-$(nproc)}"
+# 内存优先: soong_build 在 15.6GB runner 上 OOM, 保守用 2 并行(与本地一致)。
+# 可通过 workflow 的 BUILD_JOBS 覆盖。
+JOBS="${BUILD_JOBS:-2}"
 # 直接用 soong_ui, 不依赖 envsetup.sh 里的 m 函数 ——
 # 实测 CI 环境里 m 未解析成函数时会走到 make 调 build/core/config.mk 的守卫,
 # 直接 $(error done) 秒退("failed to build some targets (1 seconds)")。

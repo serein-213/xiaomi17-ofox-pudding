@@ -81,6 +81,22 @@ jobs:
           docker system prune -af || true
           echo "清理后:"; df -h / | tail -1
 
+      # AOSP 16 的 soong_build 是 Go 程序, 全量分析 Android.bp 需要大量内存;
+      # GitHub runner 只有 15.6GB, 实测会在生成 ninja 阶段被 OOM 杀掉, 表现为
+      # "ninja: build stopped: interrupted by user." + "FAILED: out/soong/build.*.ninja"
+      # (运行约 23 分钟即中断, 远未到 timeout-minutes)。
+      # 加 16GB swap 让内核有溢出空间, 是 GitHub Actions 跑 Android 构建的常规做法。
+      - name: 配置 swap
+        run: |
+          echo "内存情况:"; free -h
+          SWAPFILE=/mnt/swapfile
+          sudo fallocate -l 16G "$SWAPFILE" || sudo dd if=/dev/zero of="$SWAPFILE" bs=1M count=16384 status=none
+          sudo chmod 600 "$SWAPFILE"
+          sudo mkswap "$SWAPFILE"
+          sudo swapon "$SWAPFILE"
+          echo "swap 就绪:"; free -h
+          echo "swappiness:"; cat /proc/sys/vm/swappiness
+
       - name: 安装依赖
         run: |
           sudo apt-get update -qq
